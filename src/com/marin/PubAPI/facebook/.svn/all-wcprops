@@ -1,0 +1,149 @@
+K 25
+svn:wc:ra_dav:version-url
+V 69
+/marin/!svn/ver/55148/trunk/mscm/src/com/marin/mscm/services/facebook
+END
+FacebookDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 93
+/marin/!svn/ver/54983/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookDictionary.java
+END
+FacebookLikeCategoryDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 105
+/marin/!svn/ver/50594/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookLikeCategoryDictionary.java
+END
+FacebookRegionDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 99
+/marin/!svn/ver/54983/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookRegionDictionary.java
+END
+FacebookKeywordDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 100
+/marin/!svn/ver/54983/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookKeywordDictionary.java
+END
+FacebookWorkplaceDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 102
+/marin/!svn/ver/50594/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookWorkplaceDictionary.java
+END
+FacebookApiUrls.java
+K 25
+svn:wc:ra_dav:version-url
+V 90
+/marin/!svn/ver/39382/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookApiUrls.java
+END
+FacebookMethod.java
+K 25
+svn:wc:ra_dav:version-url
+V 89
+/marin/!svn/ver/48785/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookMethod.java
+END
+FacebookGraphService.java
+K 25
+svn:wc:ra_dav:version-url
+V 95
+/marin/!svn/ver/55148/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookGraphService.java
+END
+FacebookZipCodeDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 100
+/marin/!svn/ver/54983/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookZipCodeDictionary.java
+END
+FacebookLocaleDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 99
+/marin/!svn/ver/54983/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookLocaleDictionary.java
+END
+FacebookConnectionDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 103
+/marin/!svn/ver/54983/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookConnectionDictionary.java
+END
+BasicClientHelper.java
+K 25
+svn:wc:ra_dav:version-url
+V 92
+/marin/!svn/ver/42665/trunk/mscm/src/com/marin/mscm/services/facebook/BasicClientHelper.java
+END
+FacebookCountryDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 100
+/marin/!svn/ver/54983/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookCountryDictionary.java
+END
+FacebookCollegeMajorDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 105
+/marin/!svn/ver/50594/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookCollegeMajorDictionary.java
+END
+IFacebookMethod.java
+K 25
+svn:wc:ra_dav:version-url
+V 90
+/marin/!svn/ver/42665/trunk/mscm/src/com/marin/mscm/services/facebook/IFacebookMethod.java
+END
+ErrorCode.java
+K 25
+svn:wc:ra_dav:version-url
+V 84
+/marin/!svn/ver/42665/trunk/mscm/src/com/marin/mscm/services/facebook/ErrorCode.java
+END
+FacebookException.java
+K 25
+svn:wc:ra_dav:version-url
+V 92
+/marin/!svn/ver/53902/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookException.java
+END
+FacebookCityDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 97
+/marin/!svn/ver/54983/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookCityDictionary.java
+END
+FacebookWhiteLabelCredentials.java
+K 25
+svn:wc:ra_dav:version-url
+V 104
+/marin/!svn/ver/45769/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookWhiteLabelCredentials.java
+END
+FacebookSignatureUtil.java
+K 25
+svn:wc:ra_dav:version-url
+V 96
+/marin/!svn/ver/42665/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookSignatureUtil.java
+END
+FacebookCollegeDictionary.java
+K 25
+svn:wc:ra_dav:version-url
+V 100
+/marin/!svn/ver/50594/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookCollegeDictionary.java
+END
+FacebookParam.java
+K 25
+svn:wc:ra_dav:version-url
+V 88
+/marin/!svn/ver/42665/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookParam.java
+END
+FacebookService.java
+K 25
+svn:wc:ra_dav:version-url
+V 90
+/marin/!svn/ver/50594/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookService.java
+END
+FacebookGraphAPIUrls.java
+K 25
+svn:wc:ra_dav:version-url
+V 95
+/marin/!svn/ver/50594/trunk/mscm/src/com/marin/mscm/services/facebook/FacebookGraphAPIUrls.java
+END

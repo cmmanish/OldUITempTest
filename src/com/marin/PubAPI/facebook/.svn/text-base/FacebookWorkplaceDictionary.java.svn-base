@@ -1,0 +1,50 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.log4j.Logger;
+
+import com.facebook.api.Adworkplace;
+import com.facebook.api.Search_workplace_response;
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.msdb.vo.targeting.Company;
+
+/**
+ * Dictionary for Facebook companies
+ *
+ * @author rogertu
+ */
+public class FacebookWorkplaceDictionary extends FacebookDictionary {
+
+    protected static final Logger logger = Logger.getLogger(FacebookWorkplaceDictionary.class);
+
+    public FacebookWorkplaceDictionary(FacebookClientAccount facebookClientAccount) {
+        super(facebookClientAccount);
+    }
+
+    /**
+     * Makes a real-time search to the Facebook Graph API
+     */
+    public List<IDictionaryEntry> getEntriesByNameStartingWith(String nameStartsWith, int maxResults) {
+        List<IDictionaryEntry> workplaces = new ArrayList<IDictionaryEntry>();
+
+        try {
+            Search_workplace_response adworkplaces = this.facebookGraphService.searchWorkplace(nameStartsWith, maxResults);
+            for (Adworkplace adworkplace : adworkplaces.getData()) {
+                workplaces.add(new Company(adworkplace.getName(), String.valueOf(adworkplace.getKey())));
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return workplaces;
+    }
+
+    public DictionaryTypeEnum getType() {
+        return DictionaryTypeEnum.COMPANIES;
+    }
+
+}

@@ -1,0 +1,45 @@
+package com.marin.mscm.services.facebook;
+
+import java.net.MalformedURLException;
+import java.net.URL;
+
+import org.apache.log4j.Logger;
+
+/**
+ * Facebook Graph API Url location
+ *
+ * @author rogertu
+ */
+public class FacebookGraphAPIUrls {
+
+    private static final Logger logger = Logger.getLogger(FacebookGraphAPIUrls.class);
+
+    private static final String
+            URI_SCHEME_HTTPS = "https://",
+            FACEBOOK_GRAPH_API_URI = "graph.facebook.com/";
+    private static final URL HTTPS_SERVER_URL;
+    private static URL DEFAULT_HTTPS_SERVER_URL = null;
+
+    static {
+        HTTPS_SERVER_URL = toURL(URI_SCHEME_HTTPS + FACEBOOK_GRAPH_API_URI);
+        DEFAULT_HTTPS_SERVER_URL = HTTPS_SERVER_URL;
+    }
+
+    public static URL toURL(String url) {
+        try {
+            return new URL(url);
+        } catch (MalformedURLException e) {
+            logger.error(e);
+        }
+        return null;
+    }
+
+    public static URL getDefaultHttpsServerUrl() {
+        return DEFAULT_HTTPS_SERVER_URL;
+    }
+
+    public static void setDefaultHttpsServerUrl(URL newUrl) {
+        DEFAULT_HTTPS_SERVER_URL = newUrl;
+    }
+
+}

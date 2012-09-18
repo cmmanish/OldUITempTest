@@ -1,0 +1,71 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.log4j.Logger;
+
+import com.facebook.api.Adregion;
+import com.facebook.api.Search_region_response;
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.msdb.vo.targeting.State;
+
+/**
+ * Dictionary for Facebook states
+ *
+ * @author rogertu
+ */
+public class FacebookRegionDictionary extends FacebookDictionary {
+
+    protected static final Logger logger = Logger.getLogger(FacebookRegionDictionary.class);
+
+    public FacebookRegionDictionary(FacebookClientAccount facebookClientAccount) {
+        super(facebookClientAccount);
+    }
+
+    /**
+     * Makes a real-time search to the Facebook Graph API
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWith(String nameStartsWith, int maxResults) {
+        List<IDictionaryEntry> regions = new ArrayList<IDictionaryEntry>();
+
+        try {
+            Search_region_response adregions = this.facebookGraphService.searchRegion(nameStartsWith, maxResults);
+            for (Adregion adregion : adregions.getData()) {
+                regions.add(new State(adregion.getName(), Long.toString(adregion.getKey())));
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return regions;
+    }
+
+    /**
+     * Makes a real-time search to the Facebook Graph API with country code parameter
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWithAndFiltered(String nameStartsWith, String countryCode, int maxResults) {
+        List<IDictionaryEntry> regions = new ArrayList<IDictionaryEntry>();
+
+        try {
+            Search_region_response adregions = this.facebookGraphService.searchRegion(nameStartsWith, countryCode, maxResults);
+            for (Adregion adregion : adregions.getData()) {
+                regions.add(new State(adregion.getName(), Long.toString(adregion.getKey())));
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return regions;
+    }
+
+    @Override
+    public DictionaryTypeEnum getType() {
+        return DictionaryTypeEnum.STATES;
+    }
+
+}

@@ -1,0 +1,127 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.log4j.Logger;
+
+import com.facebook.api.Suggested_keyword;
+import com.facebook.api.Validated_keyword;
+import com.facebook.api.Validated_keywords_response;
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.msdb.vo.targeting.Keyword;
+import com.marin.msdb.vo.targeting.ValidatedKeyword;
+
+/**
+ * Dictionary for facebook keywords.
+ * Uses the facebook service to get matching keywords.
+ *
+ * TODO: could have a LRU cache for results. could be part of a Remote or CachedDictionary impl
+ *
+ * @author bjacobs
+ */
+public class FacebookKeywordDictionary extends FacebookDictionary {
+
+    protected static final Logger logger = Logger.getLogger(FacebookKeywordDictionary.class);
+
+    private static final int MAX_RESULTS = 20;
+
+    public FacebookKeywordDictionary(FacebookClientAccount facebookClientAccount) {
+        super(facebookClientAccount);
+    }
+
+    /**
+     * get the any matching keywords from facebook.
+     * @return a list of dictionary entries
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWith(String prefix, int maxResults) {
+        List<IDictionaryEntry> results = new ArrayList<IDictionaryEntry>(maxResults);
+        if (prefix != null) {
+            String trimmedPrefix = prefix.trim();
+            try {
+                List<Suggested_keyword> keywords = this.facebookGraphService.getKeywordsStartsWith(trimmedPrefix, maxResults);
+                for (Suggested_keyword suggested_keyword : keywords) {
+                    // we pull the keyword name and audience number and set them as a pair
+                    results.add(new Keyword(suggested_keyword.getName(), suggested_keyword.getDescription()));
+                }
+            } catch (Exception e) {
+                logger.error(e);
+            }
+        }
+        return results;
+    }
+
+    /**
+     * gets a matching entry from the dictionary, or null if none exists.
+     * unfortunately we cannot ask fb for an exact match,
+     * so get all entries which start with the name, up to the max, and search for an exact match.
+     * TODO: there is a chance we will miss an exact match if MAX_RESULTS is not large enough!
+     */
+    @Override
+    public IDictionaryEntry getEntryByName(String name) {
+        if (name != null) {
+            String trimmedName = name.trim();
+            List<IDictionaryEntry> entries = getEntriesByNameStartingWith(trimmedName, MAX_RESULTS);
+
+            for (IDictionaryEntry entry : entries) {
+                if (trimmedName.equalsIgnoreCase(entry.getEntryName())) {
+                    return entry;
+                }
+            }
+        }
+        return null;
+    }
+
+    // TODO override this and make use of that existing api call to validate multiple keywords at a time
+//    /**
+//     * Get a list of entries by name
+//     *
+//     * TODO make use of the batch validation
+//     */
+//    public List<IDictionaryEntry> getEntriesByNames(List<String> names) {
+//        List<IDictionaryEntry> keywords = new ArrayList<IDictionaryEntry>();
+//
+//        for (String name : names) {
+//            keywords.add(getEntryByName(name));
+//        }
+//
+//        return keywords;
+//    }
+
+    @Override
+    public DictionaryTypeEnum getType() {
+        return DictionaryTypeEnum.KEYWORDS;
+    }
+
+    /**
+     * Use the facebookGraphService to validate keywords using Facebook's getValidKeywords.
+     * We need the full info of which ones are valid, which ones are invalid, and
+     * which ones are close enough to have a suggestion so we pass back the results.
+     *
+     * @param possibleEntries - list of possible keywords that need to be validated
+     * @return an empty set if the call fails, otherwise a list of ValidatedKeywords with info
+     * about validity and suggestions.
+     */
+    public List<ValidatedKeyword> validateKeywords(List<String> possibleEntries) {
+        List<ValidatedKeyword> keywords = new ArrayList<ValidatedKeyword>(possibleEntries.size());
+        if (CollectionUtils.isNotEmpty(possibleEntries)) {
+            try {
+                Validated_keywords_response fbKeywords = this.facebookGraphService.getValidKeywords(possibleEntries);
+
+                for (Validated_keyword keyword : fbKeywords.getData()) {
+                    ValidatedKeyword validatedKeyword = new ValidatedKeyword(keyword.getName(), keyword.getName());
+                    validatedKeyword.setValid(keyword.isValid());
+
+                    keywords.add(validatedKeyword);
+                }
+            } catch (Exception e) {
+                logger.error(e);
+            }
+        }
+        return keywords;
+    }
+}

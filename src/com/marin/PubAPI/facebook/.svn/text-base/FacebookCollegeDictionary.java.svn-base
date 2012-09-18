@@ -1,0 +1,53 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.log4j.Logger;
+
+import com.facebook.api.Adcollege;
+import com.facebook.api.Search_college_response;
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.msdb.vo.targeting.College;
+
+/**
+ * Dictionary of Facebook colleges
+ *
+ * @author rogertu
+ */
+public class FacebookCollegeDictionary extends FacebookDictionary {
+
+    protected static final Logger logger = Logger.getLogger(FacebookCollegeDictionary.class);
+
+    public FacebookCollegeDictionary(FacebookClientAccount facebookClientAccount) {
+        super(facebookClientAccount);
+    }
+
+    /**
+     * Makes a real-time search to the Facebook Graph API
+     *
+     * TODO adcollege has subtext field that we want to display on the front-end.
+     * It is return in the service call, but lost when repackaged into dictionary entries here
+     */
+    public List<IDictionaryEntry> getEntriesByNameStartingWith(String nameStartsWith, int maxResults) {
+        List<IDictionaryEntry> colleges = new ArrayList<IDictionaryEntry>();
+
+        try {
+            Search_college_response adcolleges = this.facebookGraphService.searchCollege(nameStartsWith, maxResults);
+            for (Adcollege adcollege : adcolleges.getData()) {
+                colleges.add(new College(adcollege.getName(), String.valueOf(adcollege.getKey())));
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return colleges;
+    }
+
+    public DictionaryTypeEnum getType() {
+        return DictionaryTypeEnum.COLLEGES;
+    }
+
+}

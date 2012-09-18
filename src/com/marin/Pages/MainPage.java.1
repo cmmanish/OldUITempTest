@@ -1,0 +1,29 @@
+
+package com.marin.Pages;
+
+import org.apache.log4j.Logger;
+import org.openqa.selenium.By;
+import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebElement;
+
+public class MainPage extends PageWidgetHandler {
+
+	static Logger log = Logger.getLogger(MainPage.class);
+
+	public static final String CAMPAIGNSTAB = "Campaigns";
+	public static final String GROUPSTAB = "Groups";
+	public static final String KEYWORDSSTAB = "Keywordss";
+
+	public static final String ADMIN = "Admin";
+	public static final String REPORTS = "Reports";
+	public static final String LOGOUT = "Logout";
+
+	public static void clickALink(WebDriver driver, String locator) {
+
+		WebElement element = driver.findElement(By.linkText(locator));
+		element.click();
+		log.info("Clicked " + locator);
+
+	}
+
+}

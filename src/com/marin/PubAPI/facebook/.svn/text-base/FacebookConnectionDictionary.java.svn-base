@@ -1,0 +1,118 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.log4j.Logger;
+
+import com.facebook.api.Ads_connection;
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.msdb.vo.facebook.FacebookConnection;
+
+/**
+ * Dictionary for Facebook connections
+ *
+ * @author rogertu
+ */
+public class FacebookConnectionDictionary extends FacebookDictionary {
+
+    protected static final Logger logger = Logger.getLogger(FacebookConnectionDictionary.class);
+
+    private static final String
+            START_TYPE = " (",
+            END_TYPE = ")";
+
+    public FacebookConnectionDictionary(FacebookClientAccount facebookClientAccount) {
+        super(facebookClientAccount);
+    }
+
+    /**
+     * Makes a real-time search to the Facebook Graph API,
+     * then returns all of the Facebook connections
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWith(String nameStartsWith, int maxResults) {
+        List<IDictionaryEntry> connections = new ArrayList<IDictionaryEntry>();
+
+        try {
+            // this call returns the IDs of all objects for which the current session user is an administrator,
+            // and the IDs of apps for which the user is listed as a developer or advertiser.
+            List<Ads_connection> adsConnections = this.facebookGraphService.getConnections();
+            for (Ads_connection connection : adsConnections) {
+                // need to compare the name with the start characters to add connections
+                // also check if the nameStartsWith is the full name append with connection type
+                if (connection.getName().toLowerCase().startsWith(nameStartsWith.toLowerCase())) {
+                    // append the type after the name as format [name] ([type])
+                    connections.add(new FacebookConnection(connection.getName() + START_TYPE + connection.getType() +  END_TYPE, String.valueOf(connection.getId())));
+                }
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return connections;
+    }
+
+    /**
+     * For connection, we need to search it by ID
+     * @param idString connection id
+     * @return connection dictionary entry
+     */
+    @Override
+    public IDictionaryEntry getEntryById(String idString) {
+        try {
+            // This call returns the IDs of all objects for which the current session user is an administrator,
+            // and the IDs of apps for which the user is listed as a developer or advertiser.
+            List<Ads_connection> adsConnections = this.facebookGraphService.getConnections();
+            long id = Long.parseLong(idString);
+            for (Ads_connection connection : adsConnections) {
+                // need to compare the name with the start characters to add connections
+                if (connection.getId() == id) {
+                    // return the connection found by id
+                    return new FacebookConnection(connection.getName() + START_TYPE + connection.getType() +  END_TYPE, String.valueOf(connection.getId()));
+                }
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return null;
+    }
+
+
+    /**
+     * Given a marin "name (type)" string, get the corresponding connection from Facebook
+     * @param nameWithType name format as name (type)
+     * @return connection dictionary entry
+     */
+    @Override
+    public IDictionaryEntry getEntryByName(String nameWithType) {
+        try {
+            // This call returns the IDs of all objects for which the current session user is an administrator,
+            // and the IDs of apps for which the user is listed as a developer or advertiser.
+            List<Ads_connection> adsConnections = this.facebookGraphService.getConnections();
+            int endName = nameWithType.lastIndexOf(START_TYPE);
+            String nameString = nameWithType.substring(0, endName);
+
+            for (Ads_connection connection : adsConnections) {
+                // need to compare the name with the start characters to add connections
+                if (connection.getName().toLowerCase().equals(nameString.toLowerCase())) {
+                    // return the connection found by name
+                    return new FacebookConnection(connection.getName() + START_TYPE + connection.getType() +  END_TYPE, String.valueOf(connection.getId()));
+                }
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return null;
+    }
+
+    @Override
+    public DictionaryTypeEnum getType() {
+        return DictionaryTypeEnum.CONNECTIONS;
+    }
+
+}

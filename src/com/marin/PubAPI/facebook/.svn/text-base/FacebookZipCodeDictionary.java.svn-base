@@ -1,0 +1,183 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Pattern;
+
+import org.apache.commons.lang.StringUtils;
+
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionary;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.targeting.ZipCode;
+
+/**
+ * Dictionary for zip code targeting. Facebook doesn't give us a list so we have to rely
+ * on creating our own.  For Facebook, Any number between 500 and 99999 is a valid zip code.
+ *
+ * @author ekreutzer
+ */
+public class FacebookZipCodeDictionary implements IDictionary {
+
+    private static final int ZIP_CODE_SIZE = 5;
+    private static final int MIN_ZIP_CODE = 500;
+    private static final Pattern ALL_DIGITS_PATTERN = Pattern.compile("[\\d]+");
+    private static final int MAX_RESULTS = 10;
+    private static final String MIN_ZIP_PREFIX = "0050";
+    private static final int MIN_PREFIX_SIZE = 3;
+
+    /**
+     * Validate a zip code entry.  We require that the name be 5 digits long
+     * and it's numeric value must be greater than 500.
+     * @param name
+     * @return a ZipCode entry representing the name or null if no such ZipCode exists
+     */
+    @Override
+    public IDictionaryEntry getEntryByName(String name) {
+        ZipCode finalZip = null;
+        if (name != null && name.length() == ZIP_CODE_SIZE && ALL_DIGITS_PATTERN.matcher(name).matches()) {
+            int numericValue = Integer.parseInt(name);
+            if (numericValue >= MIN_ZIP_CODE) {
+                finalZip = new ZipCode(name, null);
+            }
+        }
+        return finalZip;
+    }
+
+    /**
+     * Get a list of entries by name
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNames(List<String> names) {
+        List<IDictionaryEntry> zipCodes = new ArrayList<IDictionaryEntry>();
+
+        for (String name : names) {
+            zipCodes.add(getEntryByName(name));
+        }
+
+        return zipCodes;
+    }
+
+    /**
+     * Get a set of valid zip codes starting with prefix.
+     * @param prefix
+     * @param maxResults
+     * @return a list of ZipCodes if the prefix leads to valid zip codes
+     *         an empty list otherwise.
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWith(String prefix, int maxResults) {
+        List<IDictionaryEntry> results = new ArrayList<IDictionaryEntry>(maxResults);
+
+        if (prefix != null && ALL_DIGITS_PATTERN.matcher(prefix).matches()) {
+            // For 5 digit prefixes we use the logic for a single entry
+            if (prefix.length() == ZIP_CODE_SIZE) {
+                results.add(getEntryByName(prefix));
+            } else {
+                // Otherwise we find a 4 digit prefix and return the correct number
+                // of results by adding 0, 1, 2, ... to the end of the prefix.
+                String fourDigitZip = convertInputToZipCodePrefix(prefix);
+                // Since the lowest zip code is 00500 we make sure the input
+                // doesn't dip below this.
+                if (Integer.parseInt(fourDigitZip) >= (MIN_ZIP_CODE / 10)) {
+                    for (int i = 0; i < Math.min(maxResults, MAX_RESULTS); i++) {
+                        results.add(new ZipCode(fourDigitZip + i, null));
+                    }
+                } else if (prefix.length() < MIN_PREFIX_SIZE) {
+                    // The user entered either 0 or 00 so we just want to give them
+                    // the minimum zip codes
+                    fourDigitZip = MIN_ZIP_PREFIX;
+                    for (int i = 0; i < Math.min(maxResults, MAX_RESULTS); i++) {
+                        results.add(new ZipCode(fourDigitZip + i, null));
+                    }
+                }
+            }
+        }
+        return results;
+    }
+    /**
+     * Get a set of valid zip codes starting with prefix.
+     * @param prefix
+     * @param maxResults
+     * @return a list of ZipCodes if the prefix leads to valid zip codes
+     *         an empty list otherwise.
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWithAndFiltered(String prefix, String filter, int maxResults) {
+        return getEntriesByNameStartingWith(prefix, maxResults);
+    }
+    /**
+     * Doesn't do both.  Just falls back to getEntriesByNameStartingWith() startsWIth or contains if startsWith is empty.
+     * This is the one called from the front end so we must implement this.
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWithAndContaining(String startsWith, String contains, int maxResults) {
+        if (StringUtils.isNotBlank(startsWith)) {
+            return getEntriesByNameStartingWith(startsWith, maxResults);
+        } else {
+            return getEntriesByNameStartingWith(contains, maxResults);
+        }
+    }
+
+    @Override
+    public DictionaryTypeEnum getType() {
+        return DictionaryTypeEnum.ZIP_CODES;
+    }
+
+    /**
+     * Transform the input into a string representing the first 4
+     * digits of a zip code by filling any missing digits with 0's
+     * @param prefix
+     * @return the first 4 digits of a zip code
+     */
+    private static String convertInputToZipCodePrefix(String prefix) {
+        StringBuilder sb = new StringBuilder(prefix);
+        int curLength = prefix.length();
+        if (curLength < ZIP_CODE_SIZE) {
+            for (int i = 0; i < (ZIP_CODE_SIZE - curLength - 1); i++) {
+                sb.append("0");
+            }
+        }
+        return sb.toString();
+    }
+    /**
+     * Not Supported
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameContaining(String contains, int maxResults) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Not Supported
+     */
+    @Override
+    public IDictionaryEntry getClosestEntryByName(String name) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Not Supported
+     */
+    @Override
+    public IDictionaryEntry getEntryById(String id) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Not Supported
+     */
+    @Override
+    public int size() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Not Supported
+     */
+    @Override
+    public List<IDictionaryEntry> getAllEntries() {
+        throw new UnsupportedOperationException();
+    }
+
+}

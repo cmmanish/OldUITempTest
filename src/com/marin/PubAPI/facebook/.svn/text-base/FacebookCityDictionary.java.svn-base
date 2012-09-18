@@ -1,0 +1,74 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.log4j.Logger;
+
+import com.facebook.api.Adcity;
+import com.facebook.api.Search_city_response;
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.msdb.vo.targeting.City;
+
+/**
+ * Dictionary of Facebook cities
+ *
+ * @author rogertu
+ */
+public class FacebookCityDictionary extends FacebookDictionary {
+
+    protected static final Logger logger = Logger.getLogger(FacebookCityDictionary.class);
+
+    public FacebookCityDictionary(FacebookClientAccount facebookClientAccount) {
+        super(facebookClientAccount);
+    }
+
+    /**
+     * Makes a real-time search to the Facebook Graph API
+     *
+     * TODO adcity has subtext field that we want to display on the front-end.
+     * It is returned in the service call, but lost when repackaged into dictionary entries here
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWith(String nameStartsWith, int maxResults) {
+        List<IDictionaryEntry> cities = new ArrayList<IDictionaryEntry>();
+
+        try {
+            Search_city_response adcities = this.facebookGraphService.searchCity(nameStartsWith, maxResults);
+            for (Adcity adcity : adcities.getData()) {
+                cities.add(new City(adcity.getName(), String.valueOf(adcity.getKey())));
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return cities;
+    }
+
+    /**
+     * Makes a real-time search to the Facebook Graph API with country code parameter
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWithAndFiltered(String nameStartsWith, String CountryCode, int maxResults) {
+        List<IDictionaryEntry> cities = new ArrayList<IDictionaryEntry>();
+
+        try {
+            Search_city_response adcities = this.facebookGraphService.searchCity(nameStartsWith, CountryCode, maxResults);
+            for (Adcity adcity : adcities.getData()) {
+                cities.add(new City(adcity.getName(), String.valueOf(adcity.getKey())));
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return cities;
+    }
+
+    @Override
+    public DictionaryTypeEnum getType() {
+        return DictionaryTypeEnum.CITIES;
+    }
+
+}

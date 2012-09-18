@@ -1,0 +1,76 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.log4j.Logger;
+
+import com.facebook.api.Adcountry;
+import com.facebook.api.Search_country_response;
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.msdb.vo.targeting.Country;
+
+/**
+ * Dictionary for Facebook countries
+ *
+ * @author rogertu
+ */
+public class FacebookCountryDictionary extends FacebookDictionary {
+
+    protected static final Logger logger = Logger.getLogger(FacebookCountryDictionary.class);
+
+    public FacebookCountryDictionary(FacebookClientAccount facebookClientAccount) {
+        super(facebookClientAccount);
+    }
+
+    /**
+     * Makes a real-time search to the Facebook Graph API
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWith(String nameStartsWith, int maxResults) {
+        List<IDictionaryEntry> countries = new ArrayList<IDictionaryEntry>();
+
+        try {
+            Search_country_response adcountries = this.facebookGraphService.searchCountry(nameStartsWith, maxResults);
+            for (Adcountry adcountry : adcountries.getData()) {
+                countries.add(new Country(adcountry.getName(), adcountry.getCountry_code()));
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return countries;
+    }
+
+    /**
+     * For country, when we are trying to sync down from facebook, facebook only provide country_code, but not the whole name
+     * Makes a real-time search to the Facebook Graph API based on match_country_code
+     */
+    @Override
+    public IDictionaryEntry getEntryById(String id) {
+        List<IDictionaryEntry> countries = new ArrayList<IDictionaryEntry>();
+        try {
+            Search_country_response adcountries = this.facebookGraphService.searchCountry(id);
+            for (Adcountry adcountry : adcountries.getData()) {
+                countries.add(new Country(adcountry.getName(), adcountry.getCountry_code()));
+            }
+        } catch (Exception e) {
+            logger.error("Failed adcountry search by calling facebook graph api using country_code: " + id, e);
+        }
+
+        // Double check, should not happen
+        if (countries.isEmpty()) {
+            return null;
+        }
+        // Search by ID always return one result
+        return countries.get(0);
+    }
+
+    @Override
+    public DictionaryTypeEnum getType() {
+        return DictionaryTypeEnum.COUNTRIES;
+    }
+
+}

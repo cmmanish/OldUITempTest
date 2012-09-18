@@ -1,0 +1,1813 @@
+package com.marin.mscm.services.facebook;
+
+import static com.marin.mscm.services.facebook.FacebookGraphAPIUrls.getDefaultHttpsServerUrl;
+
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.Writer;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.methods.PostMethod;
+import org.apache.commons.lang.ArrayUtils;
+import org.apache.commons.lang.StringUtils;
+import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.type.TypeReference;
+import org.json.JSONStringer;
+import org.jsoup.helper.StringUtil;
+import org.springframework.http.HttpMethod;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
+
+import com.facebook.api.Ads_account;
+import com.facebook.api.Ads_adgroup;
+import com.facebook.api.Ads_adgroup_response;
+import com.facebook.api.Ads_broad_category;
+import com.facebook.api.Ads_broad_category_response;
+import com.facebook.api.Ads_campaign;
+import com.facebook.api.Ads_connection;
+import com.facebook.api.Ads_connections_response;
+import com.facebook.api.Ads_create_adgroups_result;
+import com.facebook.api.Ads_create_campaigns_result;
+import com.facebook.api.Ads_creative;
+import com.facebook.api.Ads_stats_response;
+import com.facebook.api.Ads_targeting;
+import com.facebook.api.Ads_targeting_stats;
+import com.facebook.api.Ads_update_adgroups_result;
+import com.facebook.api.Ads_update_campaigns_result;
+import com.facebook.api.Ads_update_creatives_result;
+import com.facebook.api.Batch_call_response;
+import com.facebook.api.Create_ads_campaign_result;
+import com.facebook.api.Create_ads_creative_result;
+import com.facebook.api.Create_ads_group_result;
+import com.facebook.api.Error;
+import com.facebook.api.Error_message;
+import com.facebook.api.Failed_create;
+import com.facebook.api.Failed_update;
+import com.facebook.api.Get_ads_campaign_result;
+import com.facebook.api.Search_city_response;
+import com.facebook.api.Search_college_response;
+import com.facebook.api.Search_collegemajor_response;
+import com.facebook.api.Search_country_response;
+import com.facebook.api.Search_keyword_response;
+import com.facebook.api.Search_locale_response;
+import com.facebook.api.Search_objectbyurl_response;
+import com.facebook.api.Search_region_response;
+import com.facebook.api.Search_workplace_response;
+import com.facebook.api.Suggested_keyword;
+import com.facebook.api.Suggested_keyword_response;
+import com.facebook.api.Validated_keywords_response;
+import com.marin.mscm.services.AbstractJsonRestService;
+import com.marin.mscm.services.facebook.FacebookException.FacebookErrorEnum;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.util.DateConverter;
+import com.marin.util.FileUtils;
+import com.marin.util.UrlUtils;
+import com.marin.util.urlutils.UriTemplate;
+
+/**
+ * FacebookService backed by Facebook's Graph API
+ *
+ * @author rogertu
+ */
+@SuppressWarnings("unused")
+public class FacebookGraphService extends AbstractJsonRestService {
+
+    private static final int
+            // maximum supported by facebook
+            MAX_BATCH_SIZE = 500,
+            // number of times we are willing to retry
+            MAX_RETRIES = 5,
+            REALTIME_SEARCH_RETRIES = 2,
+            DEFAULT_NUM_POSTS = 15,
+            // A default value for limit search parameter, only used when we are searching based on id but not name, since there's no limit number set
+            DEFAULT_SEARCH_LIMIT = 20,
+            // If the query is searched by country code value, set country_code_match = 1
+            SEARCHCOUNTRYCODE_VALUE = 1;
+
+    private static final String
+            // used by everything
+            FACEBOOK_GRAPH_API_URL = getDefaultHttpsServerUrl().toString(),
+            ACCESS_TOKEN_KEY = "access_token",
+            ACCESS_TOKEN_PARAM = buildUriTemplateParams(ACCESS_TOKEN_KEY),
+            DATE_FORMAT_PARAM = "?date_format=U", // returns datetimes in Unix time, because fb defaults to different time conventions all over the place
+            REDOWNLOAD_PARAM = "&redownload=1", // allows us to redownload an object after creating or updating it
+
+            // batch request
+            BATCH_KEY = "batch",
+            BATCH_PATH = buildUriTemplateParams(BATCH_KEY),
+
+            // for paging use
+            OFFSET_KEY = "offset",
+            OFFSET_PARAM = buildUriTemplateParams(OFFSET_KEY),
+            START_TIME_KEY = "start_time",
+            START_TIME_PARAM = buildUriTemplateParams(START_TIME_KEY),
+            END_TIME_KEY = "end_time",
+            END_TIME_PARAM = buildUriTemplateParams(END_TIME_KEY),
+            LIMIT_KEY = "limit",
+            // this parameter is used for country search based on country code
+            SEARCH_COUNTRY_CODE = "match_country_code",
+            LIMIT_PARAM = buildUriTemplateParams(LIMIT_KEY),
+            COUNTRY_CODE_PARAM = buildUriTemplateParams(SEARCH_COUNTRY_CODE),
+
+            // for reporting requests
+            INCLUDE_DELETED_KEY = "include_deleted",
+            INCLUDE_DELETED_PARAM = buildUriTemplateParams(INCLUDE_DELETED_KEY),
+            STATS_MODE_KEY = "stats_mode",
+            STATS_MODE_PARAM = buildUriTemplateParams(STATS_MODE_KEY),
+
+            // everything down here ought to be moved into FacebookGraphAPIMethod
+            // account level
+            ACCOUNT_PREFIX = "act_",
+            ACCOUNT_ID_KEY = "account_id",
+            ACCOUNT_PATH = ACCOUNT_PREFIX + "{" + ACCOUNT_ID_KEY + "}",
+            ACCOUNT_BROAD_TARGETING_CATEGORIES_PATH = ACCOUNT_PATH + "/broadtargetingcategories",
+            ACCOUNT_REACH_ESTIMATE_PATH = ACCOUNT_PATH + "/reachestimate",
+
+            // connection level
+            CONNECTION_ID_KEY = "connection_id",
+            CONNECTION_PATH = "{" + CONNECTION_ID_KEY + "}",
+            CONNECTIONS_PATH = ACCOUNT_PATH + "/connectionobjects",
+            POSTS_PATH = CONNECTION_PATH + "/posts" + DATE_FORMAT_PARAM + LIMIT_PARAM + OFFSET_PARAM,
+
+            // campaign level
+            CAMPAIGN_ID_KEY = "campaign_id",
+            CAMPAIGN_PATH = "{" + CAMPAIGN_ID_KEY + "}",
+            CAMPAIGNS_PATH = ACCOUNT_PATH + "/adcampaigns",
+            GET_ALL_CAMPAIGNS_PATH = CAMPAIGNS_PATH + DATE_FORMAT_PARAM + OFFSET_PARAM + LIMIT_PARAM,
+            NAME_KEY = "name",
+            DAILY_BUDGET_KEY = "daily_budget",
+            CAMPAIGN_STATS_PATH = ACCOUNT_PATH + "/adcampaignstats",
+
+            // image level
+            ADIMAGES_PATH = ACCOUNT_PATH + "/adimages",
+            HASHES_KEY = "hashes",
+            HASHES_PARAM = "&" + HASHES_KEY + "=[{" + HASHES_KEY + "}]",
+            UPLOADED_FILES = "image_file",
+
+            // group level
+            GROUP_ID_KEY = "group_id",
+            BID_TYPE_KEY = "bid_type",
+            MAX_BID_KEY = "max_bid",
+            TARGETING_KEY = "targeting",
+            CREATIVE_KEY = "creative",
+            GROUP_PATH = "{" + GROUP_ID_KEY + "}",
+            GROUPS_PATH = CAMPAIGN_PATH + "/adgroups",
+            GET_ALL_GROUPS_PATH = GROUPS_PATH + OFFSET_PARAM + LIMIT_PARAM,
+            GROUPS_KEYWORD_STATS_PATH = GROUP_PATH + "/keywordstats",
+            GROUP_CREATE_PATH = ACCOUNT_PATH + "/adgroups",
+            GROUP_STATS = ACCOUNT_PATH + "/adgroupstats/{start_time}/{end_time}" +
+                    DATE_FORMAT_PARAM + OFFSET_PARAM + LIMIT_PARAM + INCLUDE_DELETED_PARAM + STATS_MODE_PARAM,
+
+            // creative level
+            CREATIVE_ID_KEY = "creative_id",
+            RELATED_FAN_PAGE = "related_fan_page",
+            CREATIVE_PATH = "{" + CREATIVE_ID_KEY + "}",
+            CREATIVES_PATH = ACCOUNT_PATH + "/adcreatives",
+            UPDATE_CREATIVE_PATH = GROUP_PATH,// + REDOWNLOAD_PARAM, // if we need the new creative id on update we should enable this redownload param
+
+            // miscellaneous
+            TARGETING_SPEC = "targeting_spec",
+            CURRENCY = "currency",
+
+            // various types (targetable or searchable)
+            TYPE_ADOBJECTBYURL = "adobjectbyurl",
+            TYPE_KEYWORD = "adkeyword",
+            TYPE_KEYWORD_SUGGESTION = "adkeywordsuggestion",
+            TYPE_KEYWORD_VALID = "adkeywordvalid",
+            TYPE_CITY = "adcity",
+            TYPE_COLLEGE = "adcollege",
+            TYPE_COLLEGE_MAJOR = "adcollegemajor",
+            TYPE_COUNTRY = "adcountry",
+            TYPE_LOCALE = "adlocale",
+            TYPE_REGION = "adregion",
+            TYPE_WORKPLACE = "adworkplace",
+
+            // some basic parts to build out query paths
+            SEARCH_PATH = "search",
+            TYPE_PARAM = "?type=",
+            KEYWORD_LIST_PARAM = "&keyword_list=",
+            QUERY_PARAM = "&q=",
+            QUERY = "query",
+
+            // common strings to help build out query paths
+            SEARCH_PREFIX = SEARCH_PATH + TYPE_PARAM,
+            SEARCH_POSTFIX = QUERY_PARAM + "{" + QUERY + "}" + LIMIT_PARAM,
+            // search country code need another parameter
+            SEARCH_COUNTRYCODE_POSTFIX = QUERY_PARAM + "{" + QUERY + "}" + LIMIT_PARAM + COUNTRY_CODE_PARAM,
+
+            // various query paths built out
+            // keyword autocompletion and searches
+            SEARCH_KEYWORD_PATH             = SEARCH_PREFIX + TYPE_KEYWORD              + SEARCH_POSTFIX,
+            SEARCH_KEYWORD_SUGGESTION_PATH  = SEARCH_PREFIX + TYPE_KEYWORD_SUGGESTION   + KEYWORD_LIST_PARAM + "{" + QUERY + "}",
+            SEARCH_KEYWORD_VALID_PATH       = SEARCH_PREFIX + TYPE_KEYWORD_VALID        + KEYWORD_LIST_PARAM + "{" + QUERY + "}",
+
+            // non-keyword targeting autocompletion
+            SEARCH_ADOBJECTBYURL_PATH       = SEARCH_PREFIX + TYPE_ADOBJECTBYURL  + SEARCH_POSTFIX,
+            SEARCH_CITY_PATH                = SEARCH_PREFIX + TYPE_CITY           + SEARCH_POSTFIX,
+            SEARCH_COLLEGE_PATH             = SEARCH_PREFIX + TYPE_COLLEGE        + SEARCH_POSTFIX,
+            SEARCH_COLLEGE_MAJOR_PATH       = SEARCH_PREFIX + TYPE_COLLEGE_MAJOR  + SEARCH_POSTFIX,
+            SEARCH_COUNTRY_PATH             = SEARCH_PREFIX + TYPE_COUNTRY        + SEARCH_POSTFIX,
+            SEARCH_COUNTRY_CODE_PATH        = SEARCH_PREFIX + TYPE_COUNTRY        + SEARCH_COUNTRYCODE_POSTFIX,
+            SEARCH_LOCALE_PATH              = SEARCH_PREFIX + TYPE_LOCALE         + SEARCH_POSTFIX,
+            SEARCH_REGION_PATH              = SEARCH_PREFIX + TYPE_REGION         + SEARCH_POSTFIX,
+            SEARCH_WORKPLACE_PATH           = SEARCH_PREFIX + TYPE_WORKPLACE      + SEARCH_POSTFIX,
+
+            // delimiters
+            COMMA_DELIMITER = ",",
+
+            // error handling
+            // this is a random error FB will return
+            DEFAULT_FACEBOOK_ERROR = "Unknown Facebook Error",
+            RETRY_ERROR_START = "{\"error\":{\"message\":\"(#803)",
+            // Unknown path components: is another facebook OAuthException error, the same as we need retry RETRY_ERROR_START
+            RETRY_UNKNOWN_COMPONENTS_ADGROUP = "Unknown path components: /adgroups",
+            RETRY_UNKNOWN_COMPONENTS_BROADTARGETING = "Unknown path components: /broadtargetingcategories",
+            RETRY_UNKNOWN_ERROR = "{\"error_code\":1,\"error_msg\":\"An unknown error occurred\"}",
+            RETRY_VALIDATING_APP = "\"error_code\":190,\"error_msg\":\"Error validating application\"",
+            ERROR_START = "{\"error\":{\"message\":\"";
+
+    // A list of error message pattern need to be retried
+    private static final List<String> RETRY_ERROR_LIST;
+    static {
+        List<String> list = new ArrayList<String>();
+        list.add(RETRY_ERROR_START);
+        list.add(RETRY_UNKNOWN_COMPONENTS_ADGROUP);
+        list.add(RETRY_UNKNOWN_COMPONENTS_BROADTARGETING);
+        list.add(RETRY_UNKNOWN_ERROR);
+        list.add(RETRY_VALIDATING_APP);
+        RETRY_ERROR_LIST = Collections.unmodifiableList(list);
+    }
+
+    private String imageUploadDirectory = null;
+
+    private FacebookClientAccount fca;
+
+
+    public FacebookGraphService(FacebookClientAccount facebookClientAccount) {
+        this.fca = facebookClientAccount;
+
+        try {
+            this.imageUploadDirectory = FileUtils.getClientImageLibraryDirectory(facebookClientAccount);
+        } catch (IOException e) {
+            this.logger.debug(e);
+        }
+    }
+
+    /**
+     * Adds the default parameters to the given Map.
+     *
+     * @param params The Map to add default parameters to.
+     */
+    private void addDefaultParams(Map<String, Object> params) throws FacebookException {
+
+        String accessToken = this.fca.getAccessToken();
+        if (StringUtils.isNotBlank(accessToken)) {
+            params.put(ACCESS_TOKEN_KEY, accessToken);
+        } else {
+            throw new FacebookException(FacebookErrorEnum.ERROR_INVALID_ACCESS_TOKEN);
+        }
+    }
+
+    /**
+     * Builds out a URI from the template and parameter map.
+     * The template should not contain any characters that need to be url-encoded.
+     *
+     * @param template The URI template String
+     * @param params The parameter map that will be built into a url
+     * @return The final URI built from the UriTemplate
+     */
+    private static URI buildURI(String template, Map<String, Object> params) {
+        UriTemplate uriTemplate = new UriTemplate(template);
+        return uriTemplate.expand(params);
+    }
+
+    /**
+     * Set a default value of retries for the real call.
+     *
+     * @param method The HttpMethod to use (DELETE, GET, PUT, POST)
+     * @param uriPath The URI path (part that comes after 'http://graph.facebook.com/')
+     * @param params The URI template parameters
+     * @param upload The upload object
+     * @return The result as a String
+     */
+    private String callWithUpload(HttpMethod method, String uriPath, Map<String, Object> params, Object upload) throws Exception{
+        return callWithUploadRetries(method, uriPath, params, upload, MAX_RETRIES);
+    }
+
+    /**
+     * Given a response String that we know is an JSON formatted Facebook error object,
+     * we grab the message of the error and throw a FacebookException
+     *
+     * @param response The JSON formatted Facebook error object as a String
+     * @throws FacebookException A FacebookException with the error message
+     */
+    private void throwOnErrorResponse(String response) throws FacebookException {
+        String errorMessage = DEFAULT_FACEBOOK_ERROR ;
+
+        try {
+            Error error = jsonMapper.readValue(response, Error.class);
+            if (error != null) {
+                Error_message error_message = error.getError();
+                if (error_message != null) {
+                    String message = error_message.getMessage();
+                    if (StringUtils.isNotBlank(message)) {
+                        errorMessage = message;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            this.logger.warn(e);
+        }
+
+        if (errorMessage.equals(DEFAULT_FACEBOOK_ERROR )) {
+            this.logger.warn("Unable to parse Facebook Error: " + response);
+        }
+
+        throw new FacebookException(0, errorMessage);
+    }
+
+    /**
+     * Determine if the error message means we should retry the request
+     * @param errorMessage the error message
+     * @return return true if we should retry the request, otherwise false
+     */
+    private boolean shouldRetryOnError(String errorMessage) {
+        // for the error messages, if they are in retry_error_list, return true
+        for (String errorMsg : RETRY_ERROR_LIST) {
+            if (errorMessage.contains(errorMsg)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Determine if the response is an error response
+     * @param response returning message from graph service call
+     * @return return true if the response contains an error
+     */
+    private boolean responseIsError(String response) {
+        // If a response starting with error message, return false
+        if (response.startsWith(ERROR_START)) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * NOTE: Every single Facebook Graph API call should go through here!
+     *
+     * The logic here is mostly copied from the original FacebookService class.
+     *
+     * @param method The HttpMethod to use (DELETE, GET, PUT, POST)
+     * @param uriPath The URI path (part that comes after 'http://graph.facebook.com/')
+     * @param params The URI template parameters
+     * @param upload The upload object
+     * @param numRetries a certain number we want to retry when exception occurred
+     * @return The result as a String
+     */
+    private String callWithUploadRetries(HttpMethod method, String uriPath, Map<String, Object> params, Object upload, int numRetries) throws FacebookException {
+        String response = null;
+        boolean responseBlank = Boolean.TRUE;
+        boolean firstCall = Boolean.TRUE;
+        int retryCounter = 1;
+
+        // add the default parameters to the parameter map
+        if (params == null) {
+            params = new HashMap<String, Object>();
+        }
+        addDefaultParams(params);
+
+        // create the URI
+        URI uri = buildURI(FACEBOOK_GRAPH_API_URL + uriPath + ACCESS_TOKEN_PARAM, params);
+
+        this.logger.debug("uri: " + uri.toString());
+
+        // DELETE and PUT don't return responses,
+        // But want to do this loop at least once because we do not get responses on PUT and DELETE http calls
+        boolean expectingResponse = (method == HttpMethod.GET) || (method == HttpMethod.POST) || (retryCounter <= 1);
+
+        // TODO move this retry logic into the abstract base class once error handling has been tested
+        // only retry on GET and POST http calls
+        while (expectingResponse && responseBlank && retryCounter <= numRetries) {
+
+            String errorMessage = null;
+            try {
+                // Add the file need to be uploaded
+                if (upload != null) {
+                    params.put(UPLOADED_FILES, upload);
+                }
+                response = super.call(method, uri, String.class, params);
+            } catch (ResourceAccessException rae) {
+                this.logger.warn(uri + " : " + rae);
+            } catch (HttpClientErrorException hcee) {
+                this.logger.warn(uri + " : " + hcee);
+                errorMessage = hcee.getResponseBodyAsString();
+            } catch (HttpServerErrorException hsee) {
+                this.logger.warn(uri + " : " + hsee);
+                errorMessage = hsee.getResponseBodyAsString();
+
+            }
+
+            if (errorMessage != null) {
+                // check if we should retry on this error or throw an exception
+                if (!shouldRetryOnError(errorMessage)) {
+                    throwOnErrorResponse(errorMessage);
+                }
+            }
+
+
+            this.logger.debug("\n" + response + "\n");
+
+            responseBlank = StringUtil.isBlank(response);
+            // if received a retryable error from facebook and we haven't retry enough times
+            if (responseBlank && retryCounter < numRetries) {
+
+                this.logger.debug("Received retryable error from facebook.  retry " + retryCounter + " of " + MAX_RETRIES);
+                try {
+                    Thread.sleep(getSleepTime(retryCounter));
+                } catch (InterruptedException e) {
+                    this.logger.debug("sleep interrupted", e);
+                }
+
+            } else if (!responseBlank && responseIsError(response)) {
+                // if the response looks like an error object, then throw a Facebook Exception
+                throwOnErrorResponse(response);
+            }
+
+            retryCounter++;
+        }
+        return response;
+    }
+
+    /**
+     * call without an upload param
+     */
+    private String call(HttpMethod method, String uriPath, Map<String, Object> params) throws Exception {
+        return callWithUpload(method, uriPath, params, null);
+    }
+
+    /**
+     * call with an explicit retry number
+     */
+    private String callRetries(HttpMethod method, String uriPath, Map<String, Object> params, int numRetries) throws Exception {
+        return callWithUploadRetries(method, uriPath, params, null, numRetries);
+    }
+
+    /**
+     * Convenience method that makes the service call and then uses JSON Mapper to map the String into the correct Object type
+     *
+     * @param method The HttpMethod to use (DELETE, GET, PUT, POST)
+     * @param uriPath The URI path
+     * @param params The parameter map
+     * @param returnType The basic class return type
+     * @param <T> Specifies the return type param
+     */
+    @SuppressWarnings("unchecked")
+    private <T> T call(HttpMethod method, String uriPath, Map<String, Object> params, Class<T> returnType) throws Exception {
+        String response = call(method, uriPath, params);
+
+        if (returnType == String.class) {
+            // if return type is String, do not pass it through the jsonmapper, just return
+            return (T) response;
+        }
+
+        if (StringUtil.isBlank(response)) {
+            // if return result is blank, throw a FacebookException and handled by calling method
+            throwOnErrorResponse(response);
+        }
+        return this.jsonMapper.readValue(response, returnType);
+    }
+
+    /**
+     * Convenience method that makes the service call and then uses JSON Mapper to map the String into the correct Object type
+     * with explicitly setting retry number
+     *
+     * @param method The HttpMethod to use (DELETE, GET, PUT, POST)
+     * @param uriPath The URI path
+     * @param params The parameter map
+     * @param returnType The basic class return type
+     * @param <T> Specifies the return type param
+     * @param numRetries retry number wish to retry when fail
+     */
+    @SuppressWarnings("unchecked")
+    private <T> T callRetries(HttpMethod method, String uriPath, Map<String, Object> params, Class<T> returnType, int numRetries) throws Exception {
+        String response = callRetries(method, uriPath, params, numRetries);
+
+        if (returnType == String.class) {
+            // if return type is String, do not pass it through the jsonmapper, just return
+            return (T) response;
+        }
+
+        if (StringUtil.isBlank(response)) {
+            // if return result is blank, throw a FacebookException and handled by calling method
+            throwOnErrorResponse(response);
+        }
+        return this.jsonMapper.readValue(response, returnType);
+    }
+
+    /**
+     * Convenience method that makes the service call and parses the json response with a super type token return type
+     *
+     * @param method The HttpMethod to use (DELETE, GET, PUT, POST)
+     * @param uriPath The URI path
+     * @param params The parameter map
+     * @param returnType The return class type
+     * @param <T> Specifies the return type param
+     */
+    @SuppressWarnings("unchecked")
+    private <T> T call(HttpMethod method, String uriPath, Map<String, Object> params, TypeReference<T> returnType) throws Exception {
+        String response = call(method, uriPath, params);
+        return (T) this.jsonMapper.readValue(response, returnType);
+    }
+
+    /**
+     * Convenience method that makes a Facebook service call and assumes that the response will be paginated.
+     * This will automatically call for all the subsequent pages and join the results before returning it.
+     * TODO how to handle failures?
+     *
+     * @param method The HttpMethod to use (DELETE, GET, PUT, POST)
+     * @param uriPath The URI path
+     * @param params The parameter map
+     * @param typeReference The return class type
+     * @param <T> Specifies the return type param
+     */
+    private <T> List<T> paginateCall(HttpMethod method, String uriPath, Map<String, Object> params, TypeReference<List<T>> typeReference) throws Exception {
+        params.put(LIMIT_KEY, Integer.toString(MAX_BATCH_SIZE));
+
+        List<T> returnList = new ArrayList<T>();
+        List<T> page = null;
+
+        while (page == null || page.size() >= MAX_BATCH_SIZE) {
+            // update the offset based on how many objects we already received
+            params.put(OFFSET_KEY, Integer.toString(returnList.size()));
+
+            // get the next batch
+            page = call(method, uriPath, params, typeReference);
+
+            // add all of the result to our return list
+            returnList.addAll(page);
+        }
+
+        return returnList;
+    }
+
+    /**
+     * Takes several calls and makes a single Facebook API call to accomplish all of them.
+     * TODO how do we handle failures?
+     * TODO handle a list of return types rather than just a single return type - this will then allow for the use case of chaining different api calls without making a second call {http://developers.facebook.com/docs/reference/api/batch/}
+     *
+     * @param methods List of HttpMethods to use, must have one per call
+     * @param uriPaths List of URI paths, must have one per call
+     * @param paramsList List of parameter maps, must have one per call
+     * @param returnType Single return type
+     * @param <T> Specifies the return type param
+     */
+    private <T> List<T> batchCall(List<HttpMethod> methods, List<String> uriPaths, List<Map<String, Object>> paramsList, Class<T> returnType) throws Exception {
+        // check to see that all the lists are of equal length, otherwise this doesn't really work..
+        int size = uriPaths.size();
+        if (paramsList.size() != size || methods.size() != size) {
+            this.logger.error("Facebook batch call with differing parameter sizes.");
+            return null; // TODO log me better, fix me
+        }
+
+        // all of the calls get mashed into a single parameter of the following format: [{"method":"GET","relative_url":"act_123/adgroups"},..]
+        // build out the entire batch parameter
+        Map<String, Object> batchParams = new HashMap<String, Object>();
+        JSONStringer jsonStringer = new JSONStringer();
+
+        jsonStringer.array();
+        for (int i = 0; i < size; i++) {
+            URI uri = buildURI(uriPaths.get(i), paramsList.get(i));
+
+            jsonStringer.object()
+               .key("method").value(methods.get(i).toString())
+               .key("relative_url").value(uri.toString())
+            .endObject();
+        }
+        jsonStringer.endArray();
+
+        // NOTE the batch parameter value should NOT be url encoded
+        batchParams.put(BATCH_KEY, jsonStringer.toString());
+
+        // use JSON Mapper to map each json string back into the correct object type
+        List<Batch_call_response> batchResponses = call(HttpMethod.POST, BATCH_PATH, batchParams, new TypeReference<List<Batch_call_response>>() {});
+        List<T> returnList = new ArrayList<T>();
+        // TODO what if individual results are paged? how do we tell which calls are paged?
+        for (Batch_call_response batchResponse : batchResponses) {
+            String json = batchResponse.getBody();
+            returnList.add(this.jsonMapper.readValue(json, returnType));
+        }
+
+        return returnList;
+    }
+
+    /**
+     * given the retry count, return the time to wait in milliseconds
+     * @param retryCount the retry count
+     * @return the time to wait in milliseconds
+     */
+    private static int getSleepTime(int retryCount) {
+        switch (retryCount) {
+            case 1: return 1000;
+            case 2: return 5000;
+            case 3: return 10000;
+            case 4: return 15000;
+            default: return 30000;
+        }
+    }
+
+    /**
+     * Given a string, return whether it represents a successful response.
+     * This is not the opposite of the isResponseFail().
+     * A response will return false for both if it contains json.
+     * @param response response to check if successful
+     * @return true if successful, otherwise false
+     */
+    private static boolean isResponseSuccess(String response) {
+        return (response != null && response.equals("true"));
+    }
+
+    /**
+     * This represents a graph call which explicitly fails instead of returning a json object
+     * This is not the opposite of the isResponseSuccess().
+     * A response will return false for both if it contains json.
+     * @param response the api response
+     * @return true if this repsonse represents a failed call, otherwise true
+     */
+    private static boolean isResponseFail(String response) {
+        return (response == null || response.equals("false"));
+    }
+
+    /**
+     * Get the Facebook Ads Account associated with the {@link FacebookClientAccount} of this FacebookGraphService instance.
+     *
+     * @return Ads_account
+     */
+    public Ads_account getAccount() throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+        return call(HttpMethod.GET, ACCOUNT_PATH, params, Ads_account.class);
+    }
+
+    /**
+     * Get all of the connections.
+     *
+     * @return List<Ads_connection>
+     */
+    public List<Ads_connection> getConnections() throws Exception {
+        List<Ads_connection> connections = new ArrayList<Ads_connection>();
+
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+        Ads_connections_response response = call(HttpMethod.GET, CONNECTIONS_PATH, params, Ads_connections_response.class);
+
+        if (ArrayUtils.isNotEmpty(response.getData())) {
+            connections.addAll(Arrays.asList(response.getData()));
+        }
+
+        return connections;
+    }
+
+    /**
+     * Get all of the ad campaigns under this account.
+     *
+     * @return List<Ads_campaign>
+     */
+    public List<Ads_campaign> getAllCampaigns() throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+        params.put(LIMIT_KEY, MAX_BATCH_SIZE);
+
+        // initialize counters so we know when to stop requesting data
+        int lastBatchSize;
+        int totalSize = 0;
+        List<Ads_campaign> campaigns = new ArrayList<Ads_campaign>();
+
+        boolean retrievedAllCampaigns = false;
+        while (!retrievedAllCampaigns) {
+            // make the call to facebook
+            params.put(OFFSET_KEY, totalSize);
+            Get_ads_campaign_result response = call(HttpMethod.GET, GET_ALL_CAMPAIGNS_PATH , params, Get_ads_campaign_result.class);
+
+            Ads_campaign[] moreCampaigns = response.getData();
+            if (ArrayUtils.isNotEmpty(moreCampaigns)) {
+                campaigns.addAll(Arrays.asList(moreCampaigns));
+
+                // update the offset
+                lastBatchSize = moreCampaigns.length;
+                totalSize += lastBatchSize;
+            } else {
+                lastBatchSize = 0;
+            }
+
+            // check that if last batch size was not a full batch, that we have retrieved all expected elements
+            // TODO: change this to work like getAllGroups in case facebook returns less than what we request on purpose
+            // TODO: re-use this batching logic instead of rewriting in each method (duh)
+            if (lastBatchSize < MAX_BATCH_SIZE) {
+                retrievedAllCampaigns = true;
+                int expectedSize = response.getCount();
+                if (totalSize == expectedSize) {
+                    logger.debug("expected and received stats for " + totalSize + " total groups");
+                } else {
+                    logger.warn("last batch size: " + lastBatchSize + ", total groups: " + totalSize + ", expected total groups: " + expectedSize);
+                }
+            }
+        }
+
+        return campaigns;
+    }
+
+    /**
+     * Returns a single campaign by external ID
+     *
+     * @param campaignId The external ID of the campaign
+     * @return Ads_campaign
+     */
+    public Ads_campaign getCampaign(long campaignId) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(CAMPAIGN_ID_KEY, Long.toString(campaignId));
+        return call(HttpMethod.GET, CAMPAIGN_PATH + DATE_FORMAT_PARAM, params, Ads_campaign.class);
+    }
+
+    /**
+     * Returns a list of campaigns
+     *
+     * @param campaignIds The external IDs of the campaigns.
+     * @return List<Ads_campaign>
+     */
+    public List<Ads_campaign> getCampaigns(List<Long> campaignIds) throws Exception {
+        List<Ads_campaign> campaigns = new ArrayList<Ads_campaign>();
+
+        for (Long campaignId : campaignIds) {
+            campaigns.add(getCampaign(campaignId));
+        }
+
+        return campaigns;
+    }
+
+    /**
+     * Creates a single campaign
+     *
+     * @param campaign The campaign to create
+     * @return Result object containing id if successful, otherwise an error object
+     */
+    public Create_ads_campaign_result createCampaign(Ads_campaign campaign) throws Exception {
+        Map<String, Object> params = jsonObjectToMap(campaign);
+
+        String urlParams = buildUriTemplateParams(params.keySet());
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+
+        return call(HttpMethod.POST, CAMPAIGNS_PATH + urlParams, params, Create_ads_campaign_result.class);
+    }
+
+    /**
+     * TODO run this through batch instead of a for-loop
+     * Creates multiple campaigns
+     *
+     * @param campaigns The list of campaigns to create
+     * @return Results from the creations with a separate list of errors
+     */
+    public Ads_create_campaigns_result createCampaigns(List<Ads_campaign> campaigns) throws Exception {
+        List<Long> createdCampaignIds = new ArrayList<Long>();
+        List<Failed_create> campaignErrors = new ArrayList<Failed_create>();
+
+        for (Ads_campaign campaign : campaigns) {
+            // create a single campaign
+            Create_ads_campaign_result createCampaignResult = createCampaign(campaign);
+
+            if (createCampaignResult.getError() == null) {
+                // if no error, then success..
+                createdCampaignIds.add(createCampaignResult.getId());
+            } else {
+                Failed_create failedCreate = new Failed_create();
+                failedCreate.setErrors(new String[] { createCampaignResult.getError().getMessage(), createCampaignResult.getError().getType() });
+                campaignErrors.add(failedCreate);
+            }
+        }
+
+        long[] createdCampaigns = ArrayUtils.toPrimitive(createdCampaignIds.toArray(new Long[createdCampaignIds.size()]));
+
+        Ads_create_campaigns_result campaignsResult = new Ads_create_campaigns_result();
+        campaignsResult.setUpdated_campaigns(createdCampaigns);
+        campaignsResult.setFailed_campaigns(campaignErrors.toArray(new Failed_create[campaignErrors.size()]));
+        return campaignsResult;
+    }
+
+    /**
+     * Updates a single campaign object
+     *
+     * @param campaign The campaign to update
+     * @return Results from the the update as a String. This will be "true" upon success and a json-formatted error message upon failure
+     */
+    public String updateCampaign(Ads_campaign campaign) throws Exception {
+        Map<String, Object> params = jsonObjectToMap(campaign);
+
+        String urlParams = buildUriTemplateParams(params.keySet());
+        params.put(CAMPAIGN_ID_KEY, campaign.getCampaign_id());
+
+        return call(HttpMethod.POST, CAMPAIGN_PATH + urlParams, params);
+    }
+
+    /**
+     * TODO run this through batch instead of a for-loop
+     * Updates multiple campaigns
+     *
+     * @param campaigns The list of campaigns to update
+     * @return a manually constructed Ads_update_campaigns object
+     */
+    public Ads_update_campaigns_result updateCampaigns(List<Ads_campaign> campaigns) throws Exception {
+        List<Long> updatedCampaignIds = new ArrayList<Long>();
+        List<String> campaignErrors = new ArrayList<String>();
+
+        for (Ads_campaign campaign : campaigns) {
+            // update a single campaign
+            String result = updateCampaign(campaign);
+            if (isResponseSuccess(result)) {
+                // add successful external ID
+                updatedCampaignIds.add(campaign.getCampaign_id());
+            } else if (!StringUtils.isBlank(result)) {
+                // add errors
+                Error error = jsonMapper.readValue(result, Error.class);
+                campaignErrors.add(error.getError().getMessage());
+            } else {
+                // Update campaign failed with empty response from facebook
+                campaignErrors.add("Update failed with no response");
+            }
+        }
+
+        long[] updatedCampaigns = ArrayUtils.toPrimitive(updatedCampaignIds.toArray(new Long[updatedCampaignIds.size()]));
+
+        Failed_update failedCampaigns = new Failed_update();
+        failedCampaigns.setFailed_id_placeholder(campaignErrors.toArray(new String[campaignErrors.size()]));
+
+        Ads_update_campaigns_result campaignsResult = new Ads_update_campaigns_result();
+        campaignsResult.setUpdated_campaigns(updatedCampaigns);
+        campaignsResult.setFailed_campaigns(failedCampaigns);
+
+        return campaignsResult;
+    }
+
+    /**
+     * Retrieves a single group by external ID
+     *
+     * @param groupId The external ID of the group to retrieve
+     * @return The retrieved group
+     */
+    public Ads_adgroup getGroup(long groupId) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(GROUP_ID_KEY, groupId);
+        return call(HttpMethod.GET, GROUP_PATH + DATE_FORMAT_PARAM, params, Ads_adgroup.class);
+    }
+
+    /**
+     * Retrieves a list of groups by external IDs
+     *
+     * @param groupIds The list of external IDs for the groups to retrieve
+     * @return The list of retrieved groups
+     */
+    public List<Ads_adgroup> getGroups(List<Long> groupIds) throws Exception {
+        List<Ads_adgroup> returnGroups = new ArrayList<Ads_adgroup>();
+
+        // TODO run this through batch instead of a for-loop
+        for (Long groupId : groupIds) {
+            returnGroups.add(getGroup(groupId));
+        }
+
+        return returnGroups;
+    }
+
+    /**
+     * Get all of the groups under the given campaign.
+     *
+     * @param campaignId The external ID of the campaign
+     * @return List<Ads_adgroup>
+     */
+    public List<Ads_adgroup> getAllGroups(long campaignId) throws Exception {
+        List<Ads_adgroup> allGroups = new ArrayList<Ads_adgroup>();
+
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(CAMPAIGN_ID_KEY, campaignId);
+        params.put(LIMIT_KEY, MAX_BATCH_SIZE);
+
+        int totalCount = -1;
+        int lastResponseCount = 0;
+        int currentCount = 0;
+
+        // keep on requesting until we have received all groups ie:
+        // current count of groups is less than what we expect AND we received more than 0 groups in the last request
+        // TODO: re-use this batching logic instead of rewriting in each method (duh)
+        while (totalCount < 0 || (currentCount < totalCount && lastResponseCount > 0)) {
+            lastResponseCount = 0;
+
+            // update the offset
+            params.put(OFFSET_KEY, currentCount);
+
+            // make the call for this batch
+            Ads_adgroup_response adgroupResponse = call(HttpMethod.GET, GET_ALL_GROUPS_PATH, params, Ads_adgroup_response.class);
+            totalCount = adgroupResponse.getCount();    // this count should be the same for each iteration
+
+            Ads_adgroup[] groups = adgroupResponse.getData();
+            if (ArrayUtils.isNotEmpty(groups)) {
+                // add all of the groups to our return list
+                allGroups.addAll(Arrays.asList(groups));
+                lastResponseCount = groups.length;
+                currentCount = allGroups.size();
+            }
+        }
+
+        if (currentCount > 0 && currentCount < totalCount) {
+            logger.warn("we received " + currentCount + " groups but expected " + totalCount);
+        }
+
+        return allGroups;
+    }
+
+    /**
+     * Create a single group
+     *
+     * @param group The group to create
+     */
+    public Create_ads_group_result createGroup(Ads_adgroup group) throws Exception {
+        Map<String, Object> params = jsonObjectToMap(group);
+
+        Ads_creative groupCreative = group.getCreative();
+        if (groupCreative != null) {
+            Map<String, Object> creativeParams = jsonObjectToMap(groupCreative);
+            // Add relatedPageId (related_fan_page) manually since jsonMapper doesn't pick up 0 values
+            creativeParams.put(RELATED_FAN_PAGE, groupCreative.getRelated_fan_page());
+            params.put(CREATIVE_KEY, this.jsonMapper.writeValueAsString(creativeParams));
+        }
+
+        String targetParamString = this.jsonMapper.writeValueAsString(group.getTargeting());
+        params.put(TARGETING_KEY, targetParamString);
+
+        String urlParams = buildUriTemplateParams(params.keySet());
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+
+        String imageName = null;
+        if (group.getCreative() != null) {
+            imageName = group.getCreative().getImage_file();
+        }
+
+        String response = postWithImage(GROUP_CREATE_PATH + urlParams, params, imageName);
+        return jsonMapper.readValue(response, Create_ads_group_result.class);
+    }
+
+    /**
+     * Create a number of groups
+     *
+     * @param groups List of groups to create
+     */
+    public Ads_create_adgroups_result createGroups(List<Ads_adgroup> groups) throws Exception {
+        List<Long> createdGroupIds = new ArrayList<Long>();
+        List<Failed_create> groupErrors = new ArrayList<Failed_create>();
+
+        // TODO run this through batch instead of a for-loop
+        for (Ads_adgroup group : groups) {
+            // create a single group
+            Create_ads_group_result createGroupResult = createGroup(group);
+
+            if (createGroupResult.getError() == null) {
+                // add successful external ID
+                createdGroupIds.add(createGroupResult.getId());
+            } else {
+                // add errors
+                Failed_create failedCreate = new Failed_create();
+                failedCreate.setErrors(new String[] { createGroupResult.getError().getMessage(), createGroupResult.getError().getType() });
+                groupErrors.add(failedCreate);
+            }
+        }
+
+        long[] createdGroups = ArrayUtils.toPrimitive(createdGroupIds.toArray(new Long[createdGroupIds.size()]));
+
+        Ads_create_adgroups_result groupsResult = new Ads_create_adgroups_result();
+        groupsResult.setUpdated_adgroups(createdGroups);
+        groupsResult.setFailed_adgroups(groupErrors.toArray(new Failed_create[groupErrors.size()]));
+        return groupsResult;
+    }
+
+    /**
+     * Update a single group
+     *
+     * @param group The group to update
+     */
+    public String updateGroup(Ads_adgroup group) throws Exception {
+        Map<String, Object> params = jsonObjectToMap(group);
+        String urlParams = buildUriTemplateParams(params.keySet());
+
+        Ads_creative groupCreative = group.getCreative();
+        if (groupCreative != null) {
+            Map<String, Object> creativeParams = jsonObjectToMap(groupCreative);
+            // Add relatedPageId (related_fan_page) manually since jsonMapper doesn't pick up 0 values
+            creativeParams.put(RELATED_FAN_PAGE, groupCreative.getRelated_fan_page());
+            params.put(CREATIVE_KEY, this.jsonMapper.writeValueAsString(creativeParams));
+        }
+
+        String targetParamString = this.jsonMapper.writeValueAsString(group.getTargeting());
+        params.put(TARGETING_KEY, targetParamString);
+
+        params.put(GROUP_ID_KEY, group.getAdgroup_id());
+
+        String imageName = null;
+        if (group.getCreative() != null) {
+            imageName = group.getCreative().getImage_file();
+        }
+
+        return postWithImage(GROUP_PATH + urlParams, params, imageName);
+    }
+
+    /**
+     * Update a number of groups
+     *
+     * @param groups List of groups to update
+     */
+    public Ads_update_adgroups_result updateGroups(List<Ads_adgroup> groups) throws Exception {
+        List<Long> updatedGroupIds = new ArrayList<Long>();
+        List<String> groupErrors = new ArrayList<String>();
+
+        // TODO run this through batch instead of a for-loop
+        for (Ads_adgroup group : groups) {
+            // update a single group
+            String result = updateGroup(group);
+
+            if (isResponseSuccess(result)) {
+                // add successful external ID
+                updatedGroupIds.add(group.getAdgroup_id());
+            } else if (!StringUtils.isBlank(result)) {
+                // add errors
+                Error error = jsonMapper.readValue(result, Error.class);
+                groupErrors.add(error.getError().getMessage());
+            } else {
+                // Update group failed with empty response from facebook
+                groupErrors.add("Update failed with no response");
+            }
+        }
+
+        long[] updatedGroups = ArrayUtils.toPrimitive(updatedGroupIds.toArray(new Long[updatedGroupIds.size()]));
+
+        Failed_update failedGroups = new Failed_update();
+        failedGroups.setFailed_id_placeholder(groupErrors.toArray(new String[groupErrors.size()]));
+
+        Ads_update_adgroups_result groupsResult = new Ads_update_adgroups_result();
+        groupsResult.setUpdated_adgroups(updatedGroups);
+        groupsResult.setFailed_adgroups(failedGroups);
+        return groupsResult;
+    }
+
+    /**
+     * Retrieves a group by ID and returns its target
+     *
+     * @param groupId The external ID of the group to retrieve
+     * @return The target of the retrieved group
+     */
+    public Ads_targeting getTarget(long groupId) throws Exception {
+        return getGroup(groupId).getTargeting();
+    }
+
+    public String estimateTargetStats(Ads_targeting ads_targeting) throws Exception {
+
+        String targetingSpec = this.jsonMapper.writeValueAsString(ads_targeting);
+        String urlParams = buildUriTemplateParams(Arrays.asList(TARGETING_SPEC, CURRENCY));
+
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+        params.put(TARGETING_SPEC, targetingSpec);
+        params.put(CURRENCY, fca.getCurrency().getCurrencyCode());
+        return call(HttpMethod.GET, ACCOUNT_REACH_ESTIMATE_PATH + urlParams, params);
+    }
+
+    public Ads_targeting_stats getTargetStats(Ads_targeting ads_targeting) throws Exception {
+        String targetingSpec = this.jsonMapper.writeValueAsString(ads_targeting);
+        String urlParams = buildUriTemplateParams(Arrays.asList(TARGETING_SPEC, CURRENCY));
+
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+        params.put(TARGETING_SPEC, targetingSpec);
+        params.put(CURRENCY, fca.getCurrency().getCurrencyCode());
+
+        try {
+            return call(HttpMethod.GET, ACCOUNT_REACH_ESTIMATE_PATH + urlParams, params, Ads_targeting_stats.class);
+        } catch (FacebookException e) {
+            // Most likely, this failure is from this account not having access to certain connection objects, which are in the target
+            this.logger.warn(e.getMessage());
+            return new Ads_targeting_stats();
+        }
+    }
+
+    /**
+     * Grab the keyword stats by group ID
+     *
+     * @param groupId The external ID of the group's stats to retrieve
+     * @return The response from Facebook containing the group stats as JSON object
+     */
+    public String getGroupKeywordStats(long groupId) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+
+        params.put(GROUP_ID_KEY, Long.toString(groupId));
+
+        return call(HttpMethod.GET, GROUPS_KEYWORD_STATS_PATH, params);
+    }
+
+    /**
+     * Pull down a creative by using a group ID. Use this to get a creative for which we do not yet know its ID (just created)
+     *
+     * @param groupId External ID of the group for the creative of interest
+     */
+    public Ads_creative getCreativeByGroup(long groupId) throws Exception {
+        Ads_adgroup group = getGroup(groupId);
+        return getCreative(group.getCreative_ids()[0]);
+    }
+
+    /**
+     * Get creative by its external ID
+     *
+     * @param creativeId The creative's external ID
+     */
+    public Ads_creative getCreative(long creativeId) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(CREATIVE_ID_KEY, Long.toString(creativeId));
+        return call(HttpMethod.GET, CREATIVE_PATH, params, Ads_creative.class);
+    }
+
+    /**
+     * Get a list of creatives by their external IDs
+     *
+     * @param creativeIds List of creative IDs
+     */
+    public List<Ads_creative> getCreatives(List<Long> creativeIds) throws Exception {
+        List<Ads_creative> creatives = new ArrayList<Ads_creative>();
+
+        for (Long creativeId : creativeIds) {
+            creatives.add(getCreative(creativeId));
+        }
+
+        return creatives;
+    }
+
+    /**
+     * Get all of the creatives under this account
+     *
+     * @return All creatives under this account
+     * @throws Exception Thrown if anything abnormal happens
+     */
+    public List<Ads_creative> getAllCreatives() throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+        return paginateCall(HttpMethod.GET, CREATIVES_PATH, params, new TypeReference<List<Ads_creative>>() {
+        });
+    }
+
+    /**
+     * Create a creative
+     *
+     * @param creative Creative to create
+     */
+    public Create_ads_creative_result createCreative(Ads_creative creative) throws Exception {
+        Map<String, Object> params = jsonObjectToMap(creative);
+        params.put(RELATED_FAN_PAGE, creative.getRelated_fan_page());
+        String urlParams = buildUriTemplateParams(params.keySet());
+
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+
+        String imageName = creative.getImage_file();
+        String response = postWithImage(CREATIVES_PATH + urlParams, params, imageName);
+        return jsonMapper.readValue(response, Create_ads_creative_result.class);
+    }
+
+    /**
+     * Create a list of creatives
+     *
+     * @param creatives List of creatives to create
+     */
+    public List<Create_ads_creative_result> createCreatives(List<Ads_creative> creatives) throws Exception {
+        List<Create_ads_creative_result> result = new ArrayList<Create_ads_creative_result>();
+
+        for (Ads_creative creative : creatives) {
+            result.add(createCreative(creative));
+        }
+
+        return result;
+    }
+
+    /**
+     * Updates a creative if possible, otherwise creates a new creative and sets the group to
+     * point at the new creative instead of the old one.
+     *
+     * Facebook does not allow the updating of creatives through the API except for the name field.
+     *
+     * Facebook creatives may belong to 0 or more groups at a time, but groups must contain exactly 1 creative.
+     * To prevent users from accidentally changing thousands of ads upon making a simple change in one creative,
+     * Facebook disallows changes at the creative level. Instead, when we try to update a creative, Facebook creates
+     * a new creative for us and will try to set it to the group that we are changing so that the original creative
+     * remains untouched.
+     *
+     * @param groupId External ID of the group
+     * @param creative The changed creative
+     */
+    public String updateCreative(long groupId, Ads_creative creative) throws Exception {
+        Ads_adgroup group = new Ads_adgroup();
+        group.setAdgroup_id(groupId);
+        group.setCreative(creative);
+
+        Map<String, Object> params = jsonObjectToMap(group);
+
+        // do not pass in group targeting when updating creatives
+        params.remove(TARGETING_KEY);
+
+        Map<String, Object> creativeParams = jsonObjectToMap(creative);
+        // Add relatedPageId (related_fan_page) manually since jsonMapper doesn't pick up 0 values
+        creativeParams.put(RELATED_FAN_PAGE, creative.getRelated_fan_page());
+        params.put(CREATIVE_KEY, this.jsonMapper.writeValueAsString(creativeParams));
+
+        String urlParams = buildUriTemplateParams(params.keySet());
+        params.put(GROUP_ID_KEY, group.getAdgroup_id());
+
+        String imageName = null;
+        if (group.getCreative() != null) {
+            imageName = group.getCreative().getImage_file();
+        }
+        return postWithImage(UPDATE_CREATIVE_PATH + urlParams, params, imageName);
+    }
+
+    /**
+     * Update a list of creatives for a single group
+     * TODO run these calls through batch instead of looping through them one at a time
+     *
+     * @param groupId External ID of the group
+     * @param creatives List of creatives to update
+     */
+    public Ads_update_creatives_result updateCreatives(long groupId, List<Ads_creative> creatives) throws Exception {
+        // interpret the results of the call manually
+        List<Long> updatedCreativeIds = new ArrayList<Long>();
+        List<String> creativeErrors = new ArrayList<String>();
+
+        for (Ads_creative creative : creatives) {
+            // update a single creative
+            String response = updateCreative(groupId, creative);
+
+            if (isResponseSuccess(response)) {
+                // add the updated creative's group id
+                // we are ignoring the creative ext id for now
+                updatedCreativeIds.add(groupId);
+            } else if (!StringUtils.isBlank(response)) {
+                // add errors
+                Error error = jsonMapper.readValue(response, Error.class);
+                creativeErrors.add(error.getError().getMessage());
+            } else {
+                // Update creative failed with empty response from facebook
+                creativeErrors.add("Update failed with no response");
+            }
+        }
+
+        // setup the successes
+        long[] updatedCreatives = ArrayUtils.toPrimitive(updatedCreativeIds.toArray(new Long[updatedCreativeIds.size()]));
+
+        // setup the failures
+        Failed_update failedCreatives = new Failed_update();
+        failedCreatives.setFailed_id_placeholder(creativeErrors.toArray(new String[creativeErrors.size()]));
+
+        // setup the response
+        Ads_update_creatives_result result = new Ads_update_creatives_result();
+        result.setUpdated_creatives(updatedCreatives);
+        result.setFailed_creatives(failedCreatives);
+
+        return result;
+    }
+
+    /**
+     * Delete a creative
+     *
+     * @param creative Creative to delete
+     */
+    public void deleteCreative(Ads_creative creative) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+
+        params.put(CREATIVE_ID_KEY, creative.getCreative_id());
+
+        call(HttpMethod.DELETE, CREATIVE_PATH, params);
+    }
+
+    /**
+     * Delete a list of creatives
+     *
+     * @param creatives List of creatives to delete
+     */
+    public void deleteCreatives(List<Ads_creative> creatives) throws Exception {
+        for (Ads_creative creative : creatives) {
+            // delete a single creative
+            deleteCreative(creative);
+        }
+    }
+
+    /**
+     * Attempts to post an image to Facebook using the old method of constructing a multi-part post method and executing that.
+     * If there is no image, we simply let the post go through the normal code path.
+     *
+     * NOTE: There is probably a way to get around doing this if we figure out how to setup the proper multi-part MIME MessageConverter.
+     * Since I haven't figured that out and we're running out of time, we're going to do this the quick and dirty way (the old way).
+     *
+     * NOTE: Contrary to the documentation examples (as there is no documentation itself), one does not need to include
+     * the image name as one of the parameter keys in the URI. If we do need to add it in the future, please remember
+     * to url-encode it.
+     *
+     * @param path The path to build the URI with
+     * @param params URI parameters
+     * @param imageName File name of the image
+     */
+    public String postWithImage(String path, Map<String, Object> params, String imageName) throws Exception {
+        File image = null;
+
+        if (StringUtils.isNotBlank(imageName)) {
+            // creative contains image
+            image = new File(this.imageUploadDirectory + imageName);
+            params.put("image", image);
+
+            Map<String, File> imageMap = new HashMap<String, File>();
+            imageMap.put("image", image);
+
+            Map<String, String> stringParams = new HashMap<String, String>();
+            for (Map.Entry<String, Object> entry : params.entrySet()) {
+                stringParams.put(entry.getKey(), entry.getValue().toString());
+            }
+
+            // adding the proper access token to the parameter map
+            addDefaultParams(params);
+
+            // create an http client
+            HttpClient client = new HttpClient();
+
+            // create the post method
+            String URITemplate = FACEBOOK_GRAPH_API_URL + path + ACCESS_TOKEN_PARAM;
+            PostMethod post = UrlUtils.buildHttpMultiPartRequest(
+                    buildURI(URITemplate, params),
+                    stringParams,
+                    imageMap,
+                    UrlUtils.HttpContentType.image
+            );
+
+            // execute the post method
+            client.executeMethod(post);
+
+            return post.getResponseBodyAsString();
+        }
+
+        return callWithUpload(HttpMethod.POST, path, params, image);
+    }
+    /**
+     * This should actually return Suggested_keyword_response object for better error handling/messaging,
+     * also allows us to get facebook's estimated reach at the same time.
+     *
+     * @param query The characters user typed in, which is the query condition
+     * @param limit The max number of return objects
+     * @return The response objects from Facebook which includes the keywords and audience number
+     */
+    public List<Suggested_keyword> getKeywordsStartsWith(String query, int limit) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(QUERY, query);
+        params.put(LIMIT_KEY, limit);
+        Suggested_keyword_response response = call(HttpMethod.GET, SEARCH_KEYWORD_PATH, params, Suggested_keyword_response.class);
+
+        List<Suggested_keyword> results = new ArrayList<Suggested_keyword>();
+        for (Suggested_keyword suggested_keyword : response.getData()) {
+            results.add(suggested_keyword);
+        }
+
+        return results;
+    }
+
+    public <T> T search(String searchPath, String query, int limit, Class<T> returnType) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(QUERY, query);
+        params.put(LIMIT_KEY, Integer.toString(limit));
+        return callRetries(HttpMethod.GET, searchPath, params, returnType, REALTIME_SEARCH_RETRIES);
+    }
+    /**
+     *  only used for searching country based on country_code when no full name provided
+     */
+    public <T> T search(String searchPath, String query, Class<T> returnType) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(QUERY, query);
+        params.put(SEARCH_COUNTRY_CODE, Integer.toString(SEARCHCOUNTRYCODE_VALUE));
+        // need to set this value, otherwise won't be able to get the result
+        params.put(LIMIT_KEY, Integer.toString(DEFAULT_SEARCH_LIMIT));
+        return call(HttpMethod.GET, searchPath, params, returnType);
+    }
+
+    public Search_objectbyurl_response searchAdObjectByUrl(String query, int limit) throws Exception {
+        return search(SEARCH_ADOBJECTBYURL_PATH, query, limit, Search_objectbyurl_response.class);
+    }
+
+    public Search_keyword_response searchKeyword(String query, int limit) throws Exception {
+        return search(SEARCH_KEYWORD_PATH, query, limit, Search_keyword_response.class);
+    }
+
+    public Search_city_response searchCity(String query, int limit) throws Exception {
+        return search(SEARCH_CITY_PATH, query, limit, Search_city_response.class);
+    }
+
+    public Search_city_response searchCity(String query, String countryCode, int limit) throws Exception {
+        return search(SEARCH_CITY_PATH + "&country_list=%5B'" + countryCode + "'%5D", query, limit, Search_city_response.class);
+    }
+
+    public Search_college_response searchCollege(String query, int limit) throws Exception {
+        return search(SEARCH_COLLEGE_PATH, query, limit, Search_college_response.class);
+    }
+
+    public Search_collegemajor_response searchCollegeMajor(String query, int limit) throws Exception {
+        return search(SEARCH_COLLEGE_MAJOR_PATH, query, limit, Search_collegemajor_response.class);
+    }
+
+    public Search_country_response searchCountry(String query, int limit) throws Exception {
+        return search(SEARCH_COUNTRY_PATH, query, limit, Search_country_response.class);
+    }
+
+    /**
+     * Only used this for searching country by id(country code)
+     */
+    public Search_country_response searchCountry(String id) throws Exception {
+        return search(SEARCH_COUNTRY_CODE_PATH, id, Search_country_response.class);
+    }
+
+    public Search_locale_response searchLocale(String query, int limit) throws Exception {
+        return search(SEARCH_LOCALE_PATH, query, limit, Search_locale_response.class);
+    }
+
+    public Search_region_response searchRegion(String query, int limit) throws Exception {
+        return search(SEARCH_REGION_PATH, query, limit, Search_region_response.class);
+    }
+
+    public Search_region_response searchRegion(String query, String countryCode, int limit) throws Exception {
+        return search(SEARCH_REGION_PATH + "&country_list=%5B'" + countryCode + "'%5D", query, limit, Search_region_response.class);
+    }
+
+    public Search_workplace_response searchWorkplace(String query, int limit) throws Exception {
+        return search(SEARCH_WORKPLACE_PATH, query, limit, Search_workplace_response.class);
+    }
+
+    public Validated_keywords_response getValidKeywords(List<String> keywords) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(QUERY, StringUtils.join(keywords, COMMA_DELIMITER));
+        return call(HttpMethod.GET, SEARCH_KEYWORD_VALID_PATH, params, Validated_keywords_response.class);
+    }
+
+    // TODO this should handle a list of keywords
+    public String getKeywordSuggestions(String keyword) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(QUERY, keyword);
+        return call(HttpMethod.GET, SEARCH_KEYWORD_SUGGESTION_PATH, params);
+    }
+
+    public List<Ads_broad_category> getBroadCategories() throws Exception {
+        List<Ads_broad_category> broadCategories = new ArrayList<Ads_broad_category>();
+
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+        Ads_broad_category_response response = call(HttpMethod.GET, ACCOUNT_BROAD_TARGETING_CATEGORIES_PATH, params, Ads_broad_category_response.class);
+
+        if (ArrayUtils.isNotEmpty(response.getData())) {
+            broadCategories.addAll(Arrays.asList(response.getData()));
+        }
+
+        return broadCategories;
+    }
+
+    /**
+     * Retrieves the first page of results for the group stats of this account.
+     * This is primarily for unit testing so that we do not have to pull down everything and write them into files.
+     *
+     * @param startDate The first date of interest
+     * @param endDate The last date of interest
+     * @return The response string from Facebook as a JSON object
+     */
+    public String getAccountStats(Date startDate, Date endDate) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+        params.put(LIMIT_KEY, MAX_BATCH_SIZE);
+        params.put(OFFSET_KEY, 0);
+        params.put(START_TIME_KEY, startDate.getTime() / DateConverter.ONE_SECOND_IN_MILLIS);
+        params.put(END_TIME_KEY, endDate.getTime() / DateConverter.ONE_SECOND_IN_MILLIS);
+        return call(HttpMethod.GET, GROUP_STATS, params);
+    }
+
+    /**
+     * Retrieves report files in JSON format without breaking up the date range and writes them out into report files.
+     *
+     * Due to an API limitation, this will break out date range into 1 day blocks and make separate calls for them.
+     * Caveat: This will only grab reports for date ranges for at least 1 day.
+     *
+     * @param startDate Start date
+     * @param endDate End date
+     * @param baseFileName Base file name for the reports
+     * @return List of report files
+     */
+    public List<File> getAccountStatsWithPaging(Date startDate, Date endDate, String baseFileName) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+
+        // FB requires us to pull data in batches
+        params.put(LIMIT_KEY, MAX_BATCH_SIZE);
+
+        // We want data from objects which have since been deleted
+        params.put(INCLUDE_DELETED_KEY, "true");
+
+        // Only get data on groups which have impressions > 0
+        params.put(STATS_MODE_KEY, "with_delivery");
+
+        List<File> files = new ArrayList<File>();
+
+        // calc number of days to retrieve.  Round in case of DLS or other random date discrepancies
+        int days = Math.round((endDate.getTime() - startDate.getTime()) / (float)DateConverter.ONE_DAY_IN_MILLIS);
+        if (days < 1) {
+            // always retrieve at least 1 day
+            days = 1;
+        }
+
+        // create the start and end times for the first day
+        Calendar windowStartDate = DateConverter.getCalendar(startDate, this.fca.getTimeZone(), Calendar.MILLISECOND);
+        Calendar windowEndDate = (Calendar) windowStartDate.clone();
+        windowEndDate.add(Calendar.DATE, 1);
+
+        for (int i = 0; i < days; i++) {
+            // initialize the counters so we know when to stop requesting data
+            int lastBatchSize;
+            int totalSize = 0;
+
+            // update the time parameters
+            // Facebook's Unix Epoch time is in seconds, not milliseconds
+            params.put(START_TIME_KEY, windowStartDate.getTime().getTime() / DateConverter.ONE_SECOND_IN_MILLIS);
+            params.put(END_TIME_KEY, windowEndDate.getTime().getTime() / DateConverter.ONE_SECOND_IN_MILLIS);
+
+            boolean retrievedAllStats = false;
+            while (!retrievedAllStats) {
+                // make the call to facebook
+                params.put(OFFSET_KEY, totalSize);
+                String result = call(HttpMethod.GET, GROUP_STATS, params);
+                Ads_stats_response response = this.jsonMapper.readValue(result, Ads_stats_response.class);
+
+                // update the offset
+                lastBatchSize = response.getData().length;
+                totalSize += lastBatchSize;
+
+                // check that if last batch size was not a full batch, that we have retrieved all expected elements
+                if (lastBatchSize < MAX_BATCH_SIZE) {
+                    retrievedAllStats = true;
+                    int expectedSize = response.getCount();
+                    if (totalSize == expectedSize) {
+                        logger.debug("expected and received stats for " + totalSize + " total groups");
+                    } else {
+                        logger.warn("last batch size:" + lastBatchSize + ", total groups: " + totalSize + ", expected total groups: " + expectedSize);
+                    }
+                }
+
+                // write the results to a file, which is named based on the number of the batch
+                File file = new File(FileUtils.createAlternateFileName(baseFileName, Integer.toString(files.size())));
+                Writer w = new FileWriter(file);
+                try {
+                    w.write(result);
+                } finally {
+                    w.close();
+                }
+
+                // add the file to the return list
+                files.add(file);
+            }
+
+            // update the time window to the next day
+            windowStartDate.add(Calendar.DATE, 1);
+            windowEndDate.add(Calendar.DATE, 1);
+        }
+
+        return files;
+    }
+
+    /**
+     * Retrieves report files in JSON format without breaking up the date range and writes them out into report files.
+     * If given a span of multiple days, this will return aggregate data for that date range.
+     * This does not require the date range to be more than a day and will work for time ranges less than a day,
+     * assuming that Facebook does not round our timestamps to the nearest day.
+     *
+     * @param startDate Start date
+     * @param endDate End date
+     * @param baseFileName Base file name for the reports
+     * @return List of report files
+     */
+    public List<File> getAccountStatsIgnoringDayLimit(Date startDate, Date endDate, String baseFileName) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(ACCOUNT_ID_KEY, fca.getAccountId());
+        params.put(LIMIT_KEY, MAX_BATCH_SIZE);
+
+        // Facebook's Unix Epoch time is in seconds, not milliseconds
+        params.put(START_TIME_KEY, startDate.getTime() / DateConverter.ONE_SECOND_IN_MILLIS);
+        params.put(END_TIME_KEY, endDate.getTime() / DateConverter.ONE_SECOND_IN_MILLIS);
+
+        // initialize counters so we know when to stop requesting data
+        int lastBatchSize;
+        int totalSize = 0;
+        List<File> files = new ArrayList<File>();
+
+        boolean retrievedAllStats = false;
+        while (!retrievedAllStats) {
+            // make the call to facebook
+            params.put(OFFSET_KEY, totalSize);
+            String result = call(HttpMethod.GET, GROUP_STATS, params);
+            ObjectMapper mapper = new ObjectMapper();
+            Ads_stats_response response = mapper.readValue(result, Ads_stats_response.class);
+
+            // update the offset
+            lastBatchSize = response.getData().length;
+            totalSize += lastBatchSize;
+
+            // check that if last batch size was not a full batch, that we have retrieved all expected elements
+            if (lastBatchSize < MAX_BATCH_SIZE) {
+                retrievedAllStats = true;
+                int expectedSize = response.getCount();
+                if (totalSize == expectedSize) {
+                    logger.debug("expected and received stats for " + totalSize + " total groups");
+                } else {
+                    logger.warn("last batch size:" + lastBatchSize + ", total groups: " + totalSize + ", expected total groups: " + expectedSize);
+                }
+            }
+
+            // write the results to a file, which is named based on the number of the batch
+            File file = new File(FileUtils.createAlternateFileName(baseFileName, Integer.toString(files.size())));
+            Writer w = new FileWriter(file);
+            try {
+                w.write(result);
+            } finally {
+                w.close();
+            }
+
+            // add the file to the return list
+            files.add(file);
+        }
+
+        return files;
+    }
+
+    /**
+     * Get the most recent posts for a page given its ID
+     *
+     * @param pageId The object ID of the page
+     * @return The JSON response from Facebook
+     */
+    public String getPosts(long pageId) throws Exception {
+        return getPosts(pageId, DEFAULT_NUM_POSTS, 0);
+    }
+
+    /**
+     * Get the posts for a page given its ID with an offset from the most recent post.
+     *
+     * @param pageId The object ID of the page
+     * @param limit The maximum number of posts to retrieve.
+     * @param offset The offset from the most recent post.
+     *               An offset of 0 returns n of the most recent posts.
+     *               An offset of x returns n posts from x-th most recent post and back.
+     * @return The JSON response from Facebook
+     */
+    public String getPosts(long pageId, Integer limit, Integer offset) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(CONNECTION_ID_KEY, pageId);
+
+        if (limit == null) {
+            params.put(LIMIT_KEY, DEFAULT_NUM_POSTS);
+        } else {
+            params.put(LIMIT_KEY, limit);
+        }
+
+        if (offset == null) {
+            params.put(OFFSET_KEY, 0);
+        } else {
+            params.put(OFFSET_KEY, offset);
+        }
+
+        return call(HttpMethod.GET, POSTS_PATH, params);
+    }
+
+    /**
+     * Get a page/place post given the page/place ID and the story ID.
+     *
+     * @param pageId The Page ID or Place ID
+     * @param postId The story ID of the post
+     */
+    public Map<String, Object> getPost(long pageId, long postId) throws Exception {
+        return getObject(pageId + "_" + postId);
+    }
+
+    /**
+     * Given a story ID, retrieve the story and return the ID of the author.
+     * Since we may only create sponsored stories that target posts by the page's admin,
+     * returning the admin ID is usually the same as the connection ID.
+     *
+     * @param storyId
+     * @return The author ID for this story
+     */
+    @SuppressWarnings("unchecked")
+    public Long getConnectionIDFromStoryID(long storyId) throws Exception {
+        Map<String, Object> story = getObject(storyId);
+        // from field of story object contains information about who made the post.
+        // Since we can't actually get the connection ID from the post,
+        // return the author's ID instead since it is usually equivalent to the connection ID.
+        Map<String, Object> from = (Map<String, Object>) story.get("from");
+        return Long.parseLong(String.valueOf(from.get("id")));
+    }
+
+    /**
+     * Given an arbitrary object id, get the map representation of that object
+     *
+     * @param id The ID of the object to to retrieve
+     * @return the map representation of the object, or null if one does not exist
+     */
+    public Map<String, Object> getObject(long id) throws Exception {
+        return getObject(Long.toString(id));
+    }
+
+    /**
+     * Given the path to an object, get the map representation of that object
+     *
+     * @param path The path to the object (part after https://graph.facebook.com/
+     * @return The map representation of the object, or null if one does not exist
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getObject(String path) throws Exception {
+        String response = call(HttpMethod.GET, path, new HashMap<String, Object>(0));
+
+        if (!isResponseFail(response)) {
+            return this.jsonMapper.readValue(response, HashMap.class);
+        }
+
+        return null;
+    }
+
+    /**
+     * Given the path to an object, get the raw JSON response
+     *
+     * @param path The path to the object (part after https://graph.facebook.com/
+     * @return The raw JSON response as a String
+     */
+    public String getObjectAsString(String path) throws Exception {
+        return call(HttpMethod.GET, path, new HashMap<String, Object>(0));
+    }
+
+    /**
+     * builds a single uri template param
+     * @param key key to build into a template param
+     * @return the param
+     */
+    private static String buildUriTemplateParams(String key) {
+        return buildUriTemplateParams(Arrays.asList(key), false);
+    }
+
+    private static String buildUriTemplateParams(Collection<String> keys) {
+        return buildUriTemplateParams(keys, true);
+    }
+
+    /**
+     * Takes a parameter name and builds a parameter for the URI template using the parameter name as the template key.
+     * We do this in lots of places, so it is just to improve readability.
+     *
+     * @param keys The parameter name to use as key
+     * @param firstParamIsQuestionMark set to true if these are the first params in a url
+     */
+    private static String buildUriTemplateParams(Collection<String> keys, boolean firstParamIsQuestionMark) {
+        StringBuilder stringBuilder = new StringBuilder();
+        boolean nextParamIsQuestionMark = firstParamIsQuestionMark;
+        for (String key: keys) {
+            if (nextParamIsQuestionMark) {
+                nextParamIsQuestionMark = false;
+                stringBuilder. append('?');
+            } else {
+                stringBuilder. append('&');
+            }
+
+            stringBuilder.append(key).append("={").append(key).append('}');
+        }
+        return stringBuilder.toString();
+    }
+
+    /**
+     * given an object return a map based on the json representation.
+     * converts object to json string to Map
+     * @param jsonObj the object to get a map of
+     * @return map representation of the object
+     * @throws Exception
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> jsonObjectToMap(Object jsonObj) throws Exception {
+        String jsonString = this.jsonMapper.writeValueAsString(jsonObj);
+        return this.jsonMapper.readValue(jsonString, HashMap.class);
+    }
+
+}

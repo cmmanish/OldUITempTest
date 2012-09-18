@@ -1,0 +1,74 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.log4j.Logger;
+
+import com.facebook.api.Adlocale;
+import com.facebook.api.Search_locale_response;
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.msdb.vo.targeting.Language;
+
+/**
+ * Dictionary for Facebook Languages
+ *
+ * @author rogertu
+ */
+public class FacebookLocaleDictionary extends FacebookDictionary {
+
+    protected static final Logger logger = Logger.getLogger(FacebookLocaleDictionary.class);
+    private static final int MAX_LIMIT = 10000;
+
+    public FacebookLocaleDictionary(FacebookClientAccount facebookClientAccount) {
+        super(facebookClientAccount);
+    }
+
+    /**
+     * Makes a real-time search to the Facebook Graph API
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWith(String nameStartsWith, int maxResults) {
+        List<IDictionaryEntry> locales = new ArrayList<IDictionaryEntry>();
+
+        try {
+            Search_locale_response adlocales = this.facebookGraphService.searchLocale(nameStartsWith, maxResults);
+            for (Adlocale adlocale : adlocales.getData()) {
+                locales.add(new Language(adlocale.getName(), String.valueOf(adlocale.getKey())));
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return locales;
+    }
+    /**
+     * Make an empty query for facebook locale search
+     * Get back all the locale results and see if this id is in the results
+     * @param id locale id
+     * @return return the searched dictionary entry based on locale id
+     */
+    @Override
+    public IDictionaryEntry getEntryById(String id) {
+        try {
+            // Language cannot search by key, so need to call back all the languages and compare with the id
+            Search_locale_response adlocales = this.facebookGraphService.searchLocale("", MAX_LIMIT);
+            for (Adlocale adlocale : adlocales.getData()) {
+                if (adlocale.getKey() == Long.parseLong(id)) {
+                    return new Language(adlocale.getName(), Long.toString(adlocale.getKey()));
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Failed locale search by requesting locale id: " + id, e);
+        }
+        return null;
+    }
+
+    @Override
+    public DictionaryTypeEnum getType() {
+        return DictionaryTypeEnum.LANGUAGES;
+    }
+
+}

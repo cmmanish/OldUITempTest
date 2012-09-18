@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<container name ="root">
+	<testCase name="login">
+		<field name="name=email" value="mmadhusoodan@marinsoftware.com"/>
+		<field name="name=saveable_password" value="mmadhusoodan49"/>
+		<field name="name=sign_in" value="click"/>
+	</testCase>
+	<testCase name="login1">
+		<field name="name=emailLocator" value="seach@powpowsports.com"/>
+		<field name="name=passwordLocator" value="marin2010"/>
+		<field name="name=signIn" value="click"/>
+	</testCase>
+</container>

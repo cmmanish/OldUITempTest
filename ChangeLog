@@ -1,0 +1,344 @@
+8.5.1:
+- Adding support for v201109 BudgetOrderService.
+
+8.5.0:
+- Removing support for all versions sunsetting on February 29th, 2012.
+- Removing support for clientEmail header (must use clientCustomerId with v201109).
+
+8.4.2:
+- Added support for CreateAccountService.
+
+8.4.1:
+- Updated all examples/utility code to provide a developerToken with report
+  downloads.
+- Fixing error handling in report downloads.  Addresses issue # 93.
+
+8.4.0:
+- Added support for v201109.
+
+8.3.2:
+- Added ReportUtils and examples for cross client MCC reports
+  * [not yet functioning]
+- Merged codebase and examples with DoubleClick Ad Exchange Buyer API.
+
+8.3.1:
+- Added support for ConversionTrackerService and BulkOpportunityService.
+
+8.3.0:
+- Renamed AdWordsServiceFactory.generateSerivceStub to AdwordsServiceFactory.
+  generateServiceStub
+- Added support for v201101.
+
+8.2.2:
+- Added support for returnMoneyInMicros header. See v201008/DownloadReport.java
+  as an example.
+- Fixed partial failure not being honored (Issue 70).
+- Added HandlePartialFailures.java, DeleteBulkMutateJob.java, and
+  GetAllBulkMutateJobs examples.
+- Updated GetConversionOptimizerEligibility.java example to use new campaign
+  field.
+- Added ChoiceUtils.java. See HandlePartialFailures.java and
+  PerformBulkMutateJob.java examples on how to use it.
+
+8.2.1:
+- Added support and examples for additional v201008 services.
+- Removed CSV and other data files.
+
+8.2.0:
+- Added support for v201008 with examples.
+- Added support for partial failure.
+
+8.1.1:
+- Fixed issue with XML validation in the sandbox preventing BidLandscapeService
+  from working.
+
+8.1.0:
+- Added support for v201003, with examples and tests.
+- Added MapUtils for converting between maps and map entry arrays.
+- Updated TargetingIdeaService examples to use MapUtils.
+- Updated AddAds examples to include video template ad.
+- Updated generateClientAdWordsUser to pass down authToken (issue 59)
+
+8.0.0:
+- Removed support for deprecated v13 services.
+
+7.1.1:
+- Fixed AddAds example (issue 53)
+- Fixed thread safety issue in ServiceAccountantManager (issue 54)
+
+7.1.0:
+- Updates to AuthToken retrieval
+  - Enabled proxy support (issue 30)
+  - Enabled better error handling (issue 52)
+  - Added CAPTCHA information
+  - Added AuthTokenExample.java
+
+7.0.0:
+- All references to application token have now been deprecated as application
+  token is no longer required.
+- Removed v200906 version from client library after sunset.
+- Even more enhancements to ServiceAccountantManager (issue 38)
+  - Service objects are no longer retained by default. Only the hashcode is.
+    This has fixed virtually all memory problems that were seen before.
+  - Added ability to still retain services for reverse lookup
+    - Through setRetainServices() or runtime parameter
+  - Added getAdWordsUserByService()
+- Added runtime parameters (issue 34). See README for more information
+  - com.google.api.adwords.lib.serviceaccountantmanager.retainservice
+  - com.google.api.adwords.lib.serviceaccountantmanager.autocreateaccountant
+  - com.google.api.adwords.lib.useclasspathclientconfig
+- The property useClasspathClientConfig is now a static member of AdWordsUser
+
+6.4.0:
+- Fixed race condition in ServiceAccountantManager (issue 40)
+- Further enhanced ServiceAccountantManager (issue 38):
+  - ServiceAccountManager.getInstance(boolean) has been removed. This has been
+    replaced by ServiceAccountManager.getInstance().setAutoCreate(false).
+  - Added clear()
+  - Added removeAllServicesForUser(AdWordsUser)
+  - Added getAllServicesForUser(AdWordsUser)
+  - Added getAllRegisteredServices()
+  - Added getLastServiceAccountantRecord() to ServiceAccountant
+
+6.3.0:
+- Final cleanup of examples.
+  - 34 v2009 examples total now.
+  - All examples fixed for consistency.
+
+6.2.0:
+- ServiceAccountantManager advanced features (issue 29):
+  - ServiceAccountantManager can now be instanced with
+    autoCreateAccountant=false to no longer automatically create service
+    accountants upon the first call. To create them manually, call
+    ServiceAccountantManager.createServiceAccountant before making any
+    calls to the service.
+  - getServiceAccountant will no longer create a service accountant if one does
+    not exist. This has been replaced by createServiceAccountant. It is now an
+    instance method of a ServiceAccountantManager.
+  - Added removeService to ServiceAccountantManager to remove all references
+    to the service in order for it to be garbage collected.
+  - examples/ServiceAccountantDemo.java updated to reflect these changes.
+- Cleaned up examples.
+  - Removed "Demo" from names.
+  - Renamed BulkMutateJobDemo to PerformBulkMutateJob.
+  - Renamed ValidateOnlyDemo to CheckCampaigns.
+
+6.1.0:
+- Added AdParamService.
+- Implemented validateOnly header.
+- Added build.properties.
+- Added examples:
+  - SetAdParamsDemo.java
+  - GetAllAdParamsDemo.java
+  - ValidateOnlyDemo.java
+
+6.0.1:
+- Added examples:
+  - BulkMutateJobDemo.java
+  - GetRelatedKeywordsDemo.java (updated)
+  - GetRelatedPlacementsDemo.java
+
+6.0.0:
+- Added support for v200909
+- Many under the hood improvements
+- Utility updates
+- Logging improvements
+  - Root logger is no longer overwritten when AdWordsUser is instantiated
+
+5.1.0:
+- A few generated code updates for v200906.
+
+5.0.0:
+- Added support for v200906
+- Removed support for v200902
+
+4.1.0:
+- Downgraded minimum Java version to 1.5+
+- Added support for authToken override (v200902 only).
+- Updated build file to handle distribution packaging.
+- Fixed bugs:
+  - ImageUtils.getImageDataFromUrl()
+  - UTF-8 bugs
+  - v200902 updates
+- Published testing suite (only available in source package)
+
+4.0.1:
+- Added data files.
+
+4.0.0:
+- Added support for v200902.
+- Refactored base code to no longer require AspectJ.
+- Enhanced logging module to rely on Log4J.
+  - Added default logs.
+- Added utilities:
+  - CsvUtils: writing/reading CSV files
+  - DataUtils: retrieving data stored in data.
+  - ImageUtils: retrieving byte64 encoding of image files or URLS.
+  - UnitsUtils: retrieving details on about units usage beyond those
+                supplied InfoService
+  - ReportUtils: downloading/fetching reports given a report Id.
+  - XmlUtils: extracting information and pretty printing XML files.
+
+3.0.0:
+- Removed support for v12.
+- Modified build.xml to include newer compile.
+
+2.2.0:
+- Added support for v13.
+- Updated examples to fix some bugs.
+- Examples are still defaulted to v12.
+
+2.1.0:
+- Removed j2ee dependency (issue# 13).
+- Fixed dependencies in build.xml.
+
+2.0.0:
+- Removed support for v11, updated default version to v12.
+- Minor doc fix to remove reference to "clientEmail" from AdWordsUser.
+
+1.0.1:
+- Modified build.xml to provide two builds of the client library, one with
+  external dependencies and one without.
+
+1.0.0:
+- Removed support for v10.
+- Added support for v12.
+- Alternate URL is now constructed from base URL and version.
+- Fix for null value in setTime() (http://code.google.com/p/google-api-adwords-java/issues/detail?id=6).
+- Support for new property "clientId" has been added. It replaces previous
+  clientEmail property and can serve as either clientEmail or clientCustomerId
+  (http://code.google.com/p/google-api-adwords-java/issues/detail?id=5).
+
+0.9.0:
+- Updated copyright year.
+- Renamed devlog.txt to ChangeLog.
+- Added j2ee.jar to includelib/ to get rid of the "unable to find
+  javax.activation.DataHandler and javax.mail.internet.MimeMultipart classes"
+  warning.
+- Docs generated by javadoc are now available at docs/.
+- Deprecated TODO file, tasks will be maintained at
+  http://code.google.com/p/google-api-adwords-java/issues/list.
+- Added toDate() function to ReportDate.java to return a Date object.
+- Added demo to schedule structure keyword report.
+
+0.8.2
+2/5/2007
+---
+-Removed code for v5 support.
+-Changed build file to remove v5
+-Added CriterionServiceUpdateDemo.java
+
+0.8.1
+1/26/2006
+---
+-Changed default API version to v8
+-Updated BaseCredentials.java to accomodate new services in v8
+-Fixed bug in InfoServiceDemo.java where start month was set to February intead of January
+
+0.8
+12/21/2006
+---
+- added support for AdWords API v8
+- left examples unchanged and using v7, since v8 is not available in production
+- left default service version at 7, this can be overridden in adwords.properties
+
+0.7
+11/10/2006
+---
+- added support for AdWords API v7
+- changed account service sample to use the new AccountInfo fields
+
+0.6
+9/29/2006
+---
+- added support for AdWords API v6
+
+0.5
+8/29/2006
+---
+- added a version parameter in AdWordsUser constructor: this lets you pick which version you want to work with
+- changed the build to generate multiple versions: v4, v5
+- changed samples to use v5
+- added support for applicationToken header and changed token header to developerToken
+- fixed a bug in AdWordsUser so that he takes into account the file ~/adwords.properties by default as documented
+- tested with sandbox
+
+
+06/30/2006
+---
+I found a couple of issues with the java samples.
+As it stands right now, the sample code in the SAMPLES directory use the default constructor for an AdWordsUser that takes no arguments.  The README doesn't make a mention of using the .properties file, and I actually didn't see the file in any directory.  There is no intuitive place, thus, for a person to put in their name, pw, token, etc.  I ended up using the sample java code found on the website, which uses the full constructor for the AdWordsUser and has Strings at the top.  If you want to continue to use the default constructor, I would be very clear in the readme.  Also, I couldnt find the doc/javadoc stuff anywhere (it may have been there but i just didnt know where to look); making that available on the homepage of the JCL would be nice.  You also might want to mention the path for where the actual .jar compiled binary is, instead of just saying "extract th! e adwords-api.jar".  Also, the filenames have changed; it isnt adwords-api, but now adwords-0.3, so you should change that in the Readme.  In terms of what could make the JCL better, I think better or more in depth samples could be useful, especially one that drills down to a specific ad group from the account level and gets keywords.  The link from the API homepage should go, in my opinion, to the JCL homepage and not the sourceforge page; it provides more context and is a better jumping off point than the more arcane sourceforge dl page.  Thats all the feedback I have for now; let me know if you have any other questions!
+
+
+
+11/15/05
+---
+- need to implement gzip encoding using http://www.pocketsoap.com/weblog/
+axis 1.3 support
+- nick's help for the pointcut
+I had a broken hidden file
+- pb the services extend extends org.apache.axis.client.Stub
+I can declare an implement for all, but not an extend since already a parent
+I'd like to reparent them under my own subclass that would implement the logic I need.
+don't want to have to do the introduction for each of them
+Stub+.methodx does not work
+could use the multiple introduction syntax but still need to list all that stuff, it sucks
+"An aspect can introduce fields and methods (even with bodies) onto interfaces as well as classes. "
+try to do the introduction in the interface I added
+
+11/14/05
+---
+current java lib is just an aspect applied to all service methods that handles accounting and exceptions.
+It could be refactored in a single aspect
+with an intoruction, the new interface
+and an around aspect around thye methods
+
+this would allow us to get rid of the boilerplate BaseCredentials class, as well as of all the service interfaces.
+lib] pat% wc -l *.java
+      15 AccountAdWordsService.java
+      16 AdGroupAdWordsService.java
+      44 AdWordsService.java
+      71 AdWordsServiceLogger.java
+     283 AdWordsUser.java
+     139 ApiExceptionFactory.java
+    1609 BaseCredentials.java
+      17 CampaignAdWordsService.java
+      17 CreativeAdWordsService.java
+     126 Credentials.java
+      17 InfoAdWordsService.java
+      16 KeywordAdWordsService.java
+      17 ReportAdWordsService.java
+     158 ReportDate.java
+      17 TrafficEstimatorAdWordsService.java
+    2562 total
+
+I bet I can reduce that to 500
+blog post about gardening, aspects and code generation
+this started as I decided to open source adwords api client lib
+we pushed out a binary but no code
+guy in mailing list suggested not to use it and sent out an ant file
+main reason we did not open source it was lack of time i guess, was built within our codebase
+needed to add CriterionService
+required creating a new dummy interface that extended 2 interfaces, the axis generated and our add on features
+then create an inner class in basecredentials that just wrapped the calls and implemented the counter and exception handling
+this was a desing crying out for aspects!
+
+so what's the pointcut in these generated classes?
+could be methods that throw java.rmi.RemoteException
+works / campaigns
+how would i be sure that I don't aspect more methods!
+
+could I aspect the underlying method that makes all actual ws calls?
+no cause I want to get the axis exception
+better idea
+call methods that call
+try {        java.lang.Object _resp = _call.invoke(new java.lang.Object[] {new java.lang.Integer(dummy)});
+org.apache.axis.client.Call
+
+do an around aspect for them
+done
+
+how about the introduction?
+we can have classes that extends org.apache.axis.client.Stub
+implement AdWordsService
+and inject the required method definition in there as well as supporting classes

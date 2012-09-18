@@ -1,0 +1,50 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.log4j.Logger;
+
+import com.facebook.api.Adcollegemajor;
+import com.facebook.api.Search_collegemajor_response;
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.msdb.vo.targeting.CollegeMajor;
+
+/**
+ * Dictionary of Facebook college majors
+ *
+ * @author rogertu
+ */
+public class FacebookCollegeMajorDictionary extends FacebookDictionary {
+
+    protected static final Logger logger = Logger.getLogger(FacebookCollegeMajorDictionary.class);
+
+    public FacebookCollegeMajorDictionary(FacebookClientAccount facebookClientAccount) {
+        super(facebookClientAccount);
+    }
+
+    /**
+     * Makes a real-time search to the Facebook Graph API
+     */
+    public List<IDictionaryEntry> getEntriesByNameStartingWith(String nameStartsWith, int maxResults) {
+        List <IDictionaryEntry> collegemajors = new ArrayList<IDictionaryEntry>();
+
+        try {
+            Search_collegemajor_response adcollegemajors = this.facebookGraphService.searchCollegeMajor(nameStartsWith, maxResults);
+            for (Adcollegemajor adcollegemajor : adcollegemajors.getData()) {
+                collegemajors.add(new CollegeMajor(adcollegemajor.getName(), adcollegemajor.getName()));
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return collegemajors;
+    }
+
+    public DictionaryTypeEnum getType() {
+        return DictionaryTypeEnum.COLLEGE_MAJORS;
+    }
+
+}

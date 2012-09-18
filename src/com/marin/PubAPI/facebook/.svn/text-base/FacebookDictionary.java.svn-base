@@ -1,0 +1,136 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang.StringUtils;
+
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionary;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+
+/**
+ * Abstract class for Facebook Dictionaries.
+ *
+ * @author rogertu
+ */
+abstract class FacebookDictionary implements IDictionary {
+
+    protected static final int DEFAULT_LIMIT = 20;
+    protected final FacebookGraphService facebookGraphService;
+
+    public FacebookDictionary(FacebookClientAccount facebookClientAccount) {
+        this.facebookGraphService = new FacebookGraphService(facebookClientAccount);
+    }
+
+    /**
+     * Return a single entry by name
+     */
+    @Override
+    public IDictionaryEntry getEntryByName(String name) {
+        List<IDictionaryEntry> entries = getEntriesByNameStartingWith(name, DEFAULT_LIMIT);
+
+        for (IDictionaryEntry entry : entries) {
+            if (entry.getEntryName().equals(name)) {
+                return entry;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Returns a list of entries by name, null if that entry does not exist
+     * TODO use batch validation in the FacebookGraphService
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNames(List<String> names) {
+        List<IDictionaryEntry> entries = new ArrayList<IDictionaryEntry>();
+
+        for (String name : names) {
+            if (name != null) {
+                entries.add(getEntryByName(name));
+            }
+        }
+
+        return entries;
+    }
+
+    /**
+     * Searches for entries beginning with the query
+     */
+    @Override
+    public abstract List<IDictionaryEntry> getEntriesByNameStartingWith(String nameStartsWith, int maxResults);
+
+    /**
+     * Searches for entries beginning with the query and country code
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWithAndFiltered(String nameStartsWith, String filter, int maxResults) {
+        return getEntriesByNameStartingWith(nameStartsWith, maxResults);
+    }
+
+    /**
+     * Rely on Facebook's searching mechanism rather than actually implementing this
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameContaining(String contains, int maxResults) {
+        return getEntriesByNameStartingWith(contains, maxResults);
+    }
+
+    /**
+     * Rely on Facebook's searching mechanism rather than actually implementing this
+     */
+    @Override
+    public List<IDictionaryEntry> getEntriesByNameStartingWithAndContaining(String startsWith, String contains, int maxResults) {
+        if (StringUtils.isEmpty(startsWith)) {
+            return getEntriesByNameStartingWith(contains, maxResults);
+        } else if (!StringUtils.isEmpty(contains)) {
+            //contains only matters for city and region search based on country code, the format of contains is [, countryCode],
+            //countryCode case is mattering for city search
+            return getEntriesByNameStartingWithAndFiltered(startsWith, contains.substring(2).toLowerCase(), maxResults);
+        } else {
+            return getEntriesByNameStartingWith(startsWith, maxResults);
+        }
+    }
+
+    /**
+     * Not Supported
+     */
+    @Override
+    public IDictionaryEntry getClosestEntryByName(String name) {
+        return null;
+    }
+
+    /**
+     * Overrode it by each different dictionary, only used by country, search by country_code, and locale, searched by key
+     */
+    @Override
+    public IDictionaryEntry getEntryById(String id) {
+        return null;
+    }
+
+    /**
+     * @return Dictionary type
+     */
+    @Override
+    public abstract DictionaryTypeEnum getType();
+
+    /**
+     * Not Supported
+     */
+    @Override
+    public int size() {
+        return 0;
+    }
+
+    /**
+     * Not Supported, except for broad categories and connections
+     */
+    @Override
+    public List<IDictionaryEntry> getAllEntries() {
+        return null;
+    }
+
+}

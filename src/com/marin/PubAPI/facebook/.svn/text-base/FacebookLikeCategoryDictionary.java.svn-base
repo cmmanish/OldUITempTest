@@ -1,0 +1,107 @@
+package com.marin.mscm.services.facebook;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.log4j.Logger;
+
+import com.facebook.api.Ads_broad_category;
+import com.marin.mscm.reference.DictionaryTypeEnum;
+import com.marin.mscm.reference.IDictionaryEntry;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.msdb.vo.targeting.LikeCategory;
+
+/**
+ * Dictionary for Facebook broad categories
+ */
+public class FacebookLikeCategoryDictionary extends FacebookDictionary {
+
+    protected static final Logger logger = Logger.getLogger(FacebookLikeCategoryDictionary.class);
+
+    public FacebookLikeCategoryDictionary(FacebookClientAccount facebookClientAccount) {
+        super(facebookClientAccount);
+    }
+
+    /**
+     * Looks for an exact match for the given entry name in the set of all broad categories coming from Facebook.
+     *
+     * @return a single broad category with the given name, otherwise null
+     */
+    public IDictionaryEntry getEntryByName(String name) {
+        try {
+            List<Ads_broad_category> likeCategories = this.facebookGraphService.getBroadCategories();
+            for (Ads_broad_category abc : likeCategories) {
+                if (name.equals(abc.getName())) {
+                    return new LikeCategory(abc.getId(), abc.getName(), abc.getParent_category());
+                }
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+        return null;
+    }
+
+    /**
+     * Not Supported
+     */
+    public List<IDictionaryEntry> getEntriesByNameStartingWith(String nameStartsWith, int maxResults) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Not Supported
+     */
+    public List<IDictionaryEntry> getEntriesByNameContaining(String contains, int maxResults) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Not Supported
+     */
+    public List<IDictionaryEntry> getEntriesByNameStartingWithAndContaining(String startsWith, String contains, int maxResults) {
+        throw new UnsupportedOperationException();
+    }
+
+    public DictionaryTypeEnum getType() {
+        return DictionaryTypeEnum.LIKE_CATEGORIES;
+    }
+
+    /**
+     * @return number of broad categories, -1 upon error
+     */
+    public int size() {
+        try {
+            return facebookGraphService.getBroadCategories().size();
+        } catch (Exception e) {
+            logger.error(e);
+        }
+        return -1;
+    }
+
+    /**
+     * First checks to see if we have already gotten all of the broad categories before.
+     * If not, we get it and store that in memory.
+     *
+     * @return all broad categories from Facebook
+     */
+    public List<IDictionaryEntry> getAllEntries() {
+        List<IDictionaryEntry> likeCategories = new ArrayList<IDictionaryEntry>();
+
+        try {
+            List<Ads_broad_category> broadCategories = this.facebookGraphService.getBroadCategories();
+
+            for (Ads_broad_category abc : broadCategories) {
+                likeCategories.add(new LikeCategory(
+                        abc.getId(),
+                        abc.getName(),
+                        abc.getParent_category()
+                ));
+            }
+        } catch (Exception e) {
+            logger.error(e);
+        }
+
+        return likeCategories;
+    }
+
+}

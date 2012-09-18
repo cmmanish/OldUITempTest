@@ -1,0 +1,16 @@
+<!-- This client-config.wsdd serves as an example to produce the default
+     behavior of the library. It is optional to modify this and be included
+     in the classpath. If you wish for this configuration to be used,
+     call useClasspathClientConfig(true) on your AdWordsUser object.
+     For more information see the custom client configuration deployment
+     section of the README. -->
+<deployment name='defaultClientConfig'
+    xmlns='http://xml.apache.org/axis/wsdd/'
+    xmlns:java='http://xml.apache.org/axis/wsdd/providers/java'>
+  <globalConfiguration>
+    <parameter name='disablePrettyXML' value='true'/>    
+  </globalConfiguration>
+  <transport name='http' pivot='java:com.google.api.adwords.lib.AdWordsHttpSender' />
+  <transport name='local' pivot='java:org.apache.axis.transport.local.LocalSender' />
+  <transport name='java' pivot='java:org.apache.axis.transport.java.JavaSender' />
+</deployment>

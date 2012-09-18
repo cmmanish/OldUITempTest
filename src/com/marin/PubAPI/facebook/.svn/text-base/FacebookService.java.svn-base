@@ -1,0 +1,1340 @@
+package com.marin.mscm.services.facebook;
+
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.Writer;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.methods.PostMethod;
+import org.apache.commons.lang.StringUtils;
+import org.codehaus.jackson.type.TypeReference;
+import org.springframework.http.MediaType;
+import org.springframework.http.converter.HttpMessageConverter;
+import org.springframework.http.converter.StringHttpMessageConverter;
+
+import com.facebook.api.Ads_account;
+import com.facebook.api.Ads_adgroup;
+import com.facebook.api.Ads_broad_category;
+import com.facebook.api.Ads_campaign;
+import com.facebook.api.Ads_connection;
+import com.facebook.api.Ads_connections_response;
+import com.facebook.api.Ads_create_adgroups_result;
+import com.facebook.api.Ads_create_adreport_schedules_result;
+import com.facebook.api.Ads_create_campaigns_result;
+import com.facebook.api.Ads_creative;
+import com.facebook.api.Ads_report;
+import com.facebook.api.Ads_schedule;
+import com.facebook.api.Ads_targeting;
+import com.facebook.api.Ads_targeting_stats;
+import com.facebook.api.Ads_update_adgroups_result;
+import com.facebook.api.Ads_update_campaigns_result;
+import com.facebook.api.FacebookApiException;
+import com.facebook.api.Validated_keywords_response;
+import com.marin.mscm.services.AbstractJsonRestService;
+import com.marin.msdb.vo.facebook.FacebookClientAccount;
+import com.marin.util.DateConverter;
+import com.marin.util.FileUtils;
+import com.marin.util.UrlUtils;
+import com.marin.util.UrlUtils.HttpContentType;
+
+/**
+ * Service calls the Facebook REST API.
+ * uses the Spring REST template and Jackson for JSON parsing.
+ *
+ * API is defined (poorly) here:
+ * http://wiki.developers.facebook.com/index.php/Category:Ads_API
+ *
+ * @author bjacobs
+ * @deprecated
+ */
+@Deprecated
+public class FacebookService extends AbstractJsonRestService {
+
+    private static URI FACEBOOK_API_URI = null;
+
+    static {
+        try {
+            FACEBOOK_API_URI = FacebookApiUrls.getDefaultHttpsServerUrl().toURI();
+        } catch (URISyntaxException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private final Map<String, Object> basicParams;
+
+    protected enum TargetingTypeEnum {
+        colleges,
+        college_majors,
+        workplaces,
+        locales,
+        countries,
+        regions,
+        cities
+    }
+
+    private String imageUploadDirectory = null;
+
+    private static final String
+            // basic params
+            PARAM_ACCOUNT_ID = "account_id",
+            PARAM_API_KEY = "api_key",
+
+            PARAM_FORMAT = "format",
+            PARAM_INCLUDE_DELETED = "include_deleted",
+
+            // basic values
+            VALUE_JSON_FORMAT = "json",
+            VALUE_INCLUDE_DELETED = "false",
+
+            // this response format only used for reports
+            VALUE_XML_FORMAT = "xml",
+
+            // method params
+            PARAM_METHOD = "method",
+            PARAM_CALL_ID = "call_id",
+            PARAM_SIGNATURE = "sig",
+
+            // campaign params
+            PARAM_CAMPAIGN_IDS = "campaign_ids",
+            PARAM_CAMPAIGNS = "campaign_specs",
+
+            // group params
+            PARAM_GROUP_IDS = "adgroup_ids",
+            PARAM_GROUPS = "adgroup_specs",
+
+            // autocomplete params
+            PARAM_LIKE_TYPE = "type",
+            VALUE_LIKE_TYPE = "1", // this means "interest" instead of "default".  FB UI uses "interest" so we will too.
+
+            // response params
+            PARAM_UPDATED_GROUPS = "updated_adgroups",
+            PARAM_FAILED_GROUPS = "failed_adgroups";
+
+    // to clean up their shiz and make parsing possible
+    private static final String
+            GROUP_UPDATE_ERROR_BAD_REGEX = "\"failed_adgroups\":\\{\"[\\d]+?\"",
+            GROUP_UPDATE_ERROR_OK_RESPONSE = "\"failed_adgroups\":\\{\"failed_id_placeholder\"",
+
+            CAMPAIGN_UPDATE_ERROR_BAD_REGEX = "\"failed_campaigns\":\\{\"[\\d]+?\"",
+            CAMPAIGN_UPDATE_ERROR_OK_RESPONSE = "\"failed_campaigns\":\\{\"failed_id_placeholder\"";
+
+    private static final String
+            UNKNOWN_ERROR_XML = "<error_response",
+            UNKNOWN_ERROR_JSON = "\":[[\"Unknown Facebook Error.\"]]}",
+            UNKNOW_ERROR_JSON_START = "{\"",
+            UNKNOW_ERROR_JSON_MIDDLE = "\":[],\"",
+            UNKNOWN_ERROR_GROUP_JSON = UNKNOW_ERROR_JSON_START + PARAM_UPDATED_GROUPS +
+                    UNKNOW_ERROR_JSON_MIDDLE + PARAM_FAILED_GROUPS + UNKNOWN_ERROR_JSON;
+
+    private static final int REPORT_RUN_TIME = 3; // 3AM pca timezone
+    private static final int MAX_BATCH_SIZE = 1000;  // the max fb allows
+    private static final Pattern
+            GROUP_STATS_COUNT_PATTERN = Pattern.compile("<ads_stats key=\"[\\d]+\">"),
+            GROUP_STATS_TOTAL_COUNT_PATTERN = Pattern.compile("(?<=<ads_getAdGroupStats_response_elt key=\"count\">)[\\d]*(?=</ads_getAdGroupStats_response_elt>)");
+
+    protected final FacebookClientAccount fca;
+
+    /**
+     * Construct and FB service for the give facebook client account
+     * @param fca
+     */
+    public FacebookService(FacebookClientAccount fca) {
+        super();
+
+        this.fca = fca;
+
+        // build out the basic params
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_ACCOUNT_ID, fca.getAccountId());
+        params.put(PARAM_FORMAT, VALUE_JSON_FORMAT);
+
+        // to smooth transition of upgrade to OAuth 2.0 we all both types of keys
+        // TODO only access tokens can be used: remove session_key after 2011-09-01
+        if (fca.getAccessToken() == null) {
+            params.put("session_key", fca.getSessionKey());
+            params.put("v", "1.0");
+            params.put(PARAM_API_KEY, getAppId(fca));
+        } else {
+            params.put("access_token", fca.getAccessToken());
+        }
+
+        this.basicParams = Collections.unmodifiableMap(params);
+
+        try {
+            this.imageUploadDirectory = FileUtils.getClientImageLibraryDirectory(fca);
+        } catch (IOException e) {
+            this.logger.debug(e);
+        }
+
+        // set up the rest template http converters
+        for (HttpMessageConverter<?> mc : this.restTemplate.getMessageConverters()) {
+
+            if (mc instanceof StringHttpMessageConverter) {
+                ((StringHttpMessageConverter) mc).setSupportedMediaTypes(Arrays.asList(
+
+                // send proper content-type to fb so we dont get http 500 errors
+                new MediaType("application", "x-www-form-urlencoded"),
+
+                // parse jsons responses from fb as strings because they are often malformed
+                new MediaType("application", "json"),
+
+                // parse xml reports as strings
+                new MediaType("text", "xml")));
+            }
+        }
+    }
+
+    /**
+     * Convenience method for getting the Application ID using the customer whitelabel
+     *
+     * @param facebookClientAccount FacebookClientAccount to get whitelabel from
+     * @return the App ID for this whitelabel
+     */
+    private String getAppId(FacebookClientAccount facebookClientAccount) {
+        return FacebookWhiteLabelCredentials.getInstance().getAppId(facebookClientAccount.getClient().getCustomer().getWhiteLabel());
+    }
+
+    /**
+     * Convenience method for getting the Secret Key using the customer whitelabel
+     *
+     * @param facebookClientAccount FacebookClientAccount to get whitelabel from
+     * @return the Secret Key for this whitelabel
+     */
+    private String getSecretKey(FacebookClientAccount facebookClientAccount) {
+        return FacebookWhiteLabelCredentials.getInstance().getSecretKey(facebookClientAccount.getClient().getCustomer().getWhiteLabel());
+    }
+
+    /**
+     * forwards to below call impl with DEFAULT_FORMAT String arg
+     *
+     * @param method
+     * @param params
+     * @return JSON string of the response
+     * @throws Exception
+     */
+    private String call(FacebookMethod method, Map<String, Object> params) throws Exception {
+        return call(method, params, VALUE_JSON_FORMAT);
+    }
+
+    /**
+     * Calls the facebook api with the specified method and params
+     *
+     * @param method
+     * @param params
+     * @param format normally "json", but reports request "xml" format.
+     * @throws Exception
+     */
+    private String call(FacebookMethod method, Map<String, Object> params, String format) throws Exception {
+
+        params.putAll(this.basicParams);
+        params.put(PARAM_METHOD, method.methodName());
+        params.put(PARAM_CALL_ID, System.currentTimeMillis());
+        params.put(PARAM_FORMAT, format);
+
+        Map<String, String> jsonParams = getJsonParams(params);
+
+        // sign the call
+        String signature = FacebookSignatureUtil.generateSignature(jsonParams, getSecretKey(fca));
+        jsonParams.put(PARAM_SIGNATURE, signature);
+
+        int count = 1;
+        final int MAX_RETRIES = 5;
+        final long SLEEP_TIME = 5000;
+        String response = null;
+        boolean isBlank = true;
+
+        // retry until we get a non-empty result from fb
+        while (isBlank && count <= MAX_RETRIES) {
+
+            // make the service call
+            response = super.call(FACEBOOK_API_URI, jsonParams);
+
+            // hack to deal with facebook's random empty response
+            isBlank = StringUtils.isBlank(response);
+            if (isBlank) {
+                this.logger.debug("received empty response from facebook.  retry " + count + " of " + MAX_RETRIES);
+                try {
+                    Thread.sleep(SLEEP_TIME);
+                } catch (InterruptedException e) {
+                    this.logger.debug("sleep interupted", e);
+                }
+            }
+            count++;
+        }
+
+        throwOnErrorResponse(response, format);
+
+        return response;
+    }
+
+    /**
+     * Make the service call and json parse the response with a Class<?> return type
+     *
+     * @param <T> specified by the return type param
+     * @param method
+     * @param params
+     * @param returnType basic class return type
+     * @throws Exception
+     */
+    private <T> T call(FacebookMethod method, Map<String, Object> params, Class<T> returnType) throws Exception {
+        return this.jsonMapper.readValue(call(method, params), returnType);
+    }
+
+    /**
+     * Make the service call and json parse the response with a super type token return type
+     * @param <T> specified by the return type param
+     * @param method
+     * @param params
+     * @param returnType a super token type for specifying generics
+     * @throws Exception
+     */
+    @SuppressWarnings("unchecked")
+    private <T> T call(FacebookMethod method, Map<String, Object> params, TypeReference<T> returnType) throws Exception {
+        //UGH, eclipse doesn't think this cast is needed, but javac does, don't remove it!
+        return (T) this.jsonMapper.readValue(call(method, params), returnType);
+    }
+
+    /**
+     * given start and end date, construct a Facebook time range
+     *
+     * @param startDate
+     * @param endDate
+     * @return time range as a unmodifiable param map
+     */
+    private List<Map<String, Long>> buildTimeRange(Date startDate, Date endDate) {
+        List<Map<String, Long>> ret = new ArrayList<Map<String, Long>>();
+
+        long startTime = startDate.getTime() / 1000;
+        long endTime = endDate.getTime() / 1000;
+
+        while (startTime < endTime) {
+            long rangeEnd = startTime + DateConverter.ONE_DAY_IN_SECS;
+            if (rangeEnd > endTime) {
+                rangeEnd = endTime;
+            }
+
+            Map<String, Long> timeRange = new HashMap<String, Long>(2);
+            timeRange.put("time_start", startTime);
+            timeRange.put("time_stop", rangeEnd);
+            ret.add(timeRange);
+
+            startTime = rangeEnd;
+        }
+
+        return ret;
+    }
+
+    //// Account Methods ////
+
+    /**
+     * get data for this current account, like currency
+     */
+    public Ads_account getAccount() throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_INCLUDE_DELETED, VALUE_INCLUDE_DELETED);
+
+        List<Ads_account> accounts = call(FacebookMethod.ADS_GET_ACCOUNTS, params, new TypeReference<List<Ads_account>>() {
+        });
+
+        // find the right account in the response
+        Long accountId = this.fca.getAccountId();
+        for (Ads_account account : accounts) {
+            if (account.getAccount_id() == accountId) {
+                return account;
+            }
+        }
+
+        // could not find the account!
+        throw new FacebookException(0, "could not find account id: " + accountId + " in facebook getAccounts response: " + accounts);
+    }
+
+    /**
+     * get a list of all valid "connections" for this account.
+     * a connection can be a facebook page, application, or event
+     * @throws Exception
+     */
+    public List<Ads_connection> getConnections() throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_INCLUDE_DELETED, VALUE_INCLUDE_DELETED);
+
+        Ads_connections_response response = call(FacebookMethod.ADS_GET_CONNECTIONS, params, Ads_connections_response.class);
+        return Arrays.asList(response.getData());
+    }
+
+    //// Account Methods ////
+
+    //// Campaign Methods ////
+    /**
+     * Get all campaigns service call
+     *
+     * @return All the campaigns
+     * @throws Exception
+     */
+    public List<Ads_campaign> getAllCampaigns() throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_INCLUDE_DELETED, VALUE_INCLUDE_DELETED);
+
+        return call(FacebookMethod.ADS_GET_CAMPAIGNS, params, new TypeReference<List<Ads_campaign>>() {
+        });
+    }
+
+    /**
+     * Get campaigns service call
+     *
+     * @param campaignExtIds The campaignExtIds to get campaigns from.
+     * @return The relevant campaigns
+     * @throws Exception
+     */
+    public List<Ads_campaign> getCampaigns(List<Long> campaignExtIds) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_CAMPAIGN_IDS, campaignExtIds);
+        params.put(PARAM_INCLUDE_DELETED, VALUE_INCLUDE_DELETED);
+
+        return call(FacebookMethod.ADS_GET_CAMPAIGNS, params, new TypeReference<List<Ads_campaign>>() {
+        });
+    }
+
+    /**
+     * Create campaigns service call
+     *
+     * @param campaigns campaigns to add
+     * @throws Exception
+     */
+    public Ads_create_campaigns_result createCampaigns(List<Ads_campaign> campaigns) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_CAMPAIGNS, campaigns);
+
+        return call(FacebookMethod.ADS_CREATE_CAMPAIGNS, params, Ads_create_campaigns_result.class);
+    }
+
+    /**
+     * Update campaigns service call
+     *
+     * @param campaigns campaigns to add
+     * @throws Exception
+     */
+    public Ads_update_campaigns_result updateCampaigns(List<Ads_campaign> campaigns) throws Exception {
+        Ads_update_campaigns_result result = null;
+
+        if (!campaigns.isEmpty()) {
+
+            Map<String, Object> params = new HashMap<String, Object>();
+            params.put(PARAM_CAMPAIGNS, campaigns);
+
+            String response = call(FacebookMethod.ADS_UPDATE_CAMPAIGNS, params);
+
+            // if facebook sends us back a crazy XML error, replace it with a crazy JSON error
+            if (response.contains(UNKNOWN_ERROR_XML)) {
+                response = UNKNOWN_ERROR_GROUP_JSON;
+            }
+
+            // remove ids from the group errors since jackson cant parse them
+            response = response.replaceAll(CAMPAIGN_UPDATE_ERROR_BAD_REGEX, CAMPAIGN_UPDATE_ERROR_OK_RESPONSE);
+            this.logger.debug("modified repsonse: " + response);
+
+            // if the responses has no failures it will return an empty array instead of an empty map for some reason
+            response = response.replaceAll(":\\[]}$", ":\\{}}");
+
+            // now we can hopefully parse into our result object
+            result = this.jsonMapper.readValue(response, Ads_update_campaigns_result.class);
+        }
+
+        return result;
+    }
+
+    //// Campaign Methods ////
+
+    //// Group Methods ////
+    /**
+     * Get groups service call
+     *
+     * @param campaignId The campaign to get groups from
+     * @param groupExtIds
+     * @return The relevant ad groups
+     * @throws Exception
+     */
+    public List<Ads_adgroup> getGroups(long campaignId, List<Long> groupExtIds) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_INCLUDE_DELETED, VALUE_INCLUDE_DELETED);
+        params.put(PARAM_CAMPAIGN_IDS, new long[] { campaignId });
+
+        List<Ads_adgroup> groups = new ArrayList<Ads_adgroup>(groupExtIds.size());
+
+        // while there are still ids left
+        int nextBatchPos = 0;
+        boolean idsLeft = true;
+        while (idsLeft) {
+            int endIndex = nextBatchPos + MAX_BATCH_SIZE;
+            if (endIndex >= groupExtIds.size()) {
+                // we've exhausted our list so this is the last batch
+                endIndex = groupExtIds.size();
+                idsLeft = false;
+            }
+
+            // get the next batch of ids
+            List<Long> batchIds = groupExtIds.subList(nextBatchPos, endIndex);
+            params.put(PARAM_GROUP_IDS, batchIds);
+
+            // add this batch to the collection
+            groups.addAll(call(FacebookMethod.ADS_GET_GROUPS, params, new TypeReference<List<Ads_adgroup>>() {}));
+
+            // move the batch ahead
+            nextBatchPos = endIndex;
+        }
+
+        return groups;
+    }
+
+    /**
+     * Get all groups service call
+     * fb changed the API so now we need to batch them.
+     *
+     * @param campaignId The campaign to get all groups from.
+     * @return The relevant ad groups
+     * @throws Exception
+     */
+    public List<Ads_adgroup> getAllGroups(long campaignId) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_INCLUDE_DELETED, VALUE_INCLUDE_DELETED);
+        params.put(PARAM_CAMPAIGN_IDS, new long[] { campaignId });
+
+        return paginateCall(FacebookMethod.ADS_GET_GROUPS, params, new TypeReference<List<Ads_adgroup>>() {});
+    }
+
+    /**
+     * Given a method, params, and return type, paginate the calls using the limit and offset params.
+     * @param <T> the return type which will be returned in a list
+     * @param method REST method to call
+     * @param params params for the method
+     * @param typeRefList type reference of the list type to return
+     * @return the populated returnlist for convenience
+     * @throws Exception
+     */
+    private <T> List<T> paginateCall(FacebookMethod method, Map<String, Object> params, TypeReference<List<T>> typeRefList) throws Exception {
+        params.put("limit", MAX_BATCH_SIZE);
+
+        List<T> returnList = new ArrayList<T>();
+        List<T> page = null;
+
+        // keep on getting batches until we get an incomplete one
+        while (page == null || page.size() >= MAX_BATCH_SIZE) {
+
+            // update the offset based on how many groups we already received
+            params.put("offset", returnList.size());
+
+            // get this batch of groups
+            page = call(method, params, typeRefList);
+
+            // add all of the results to our return list
+            returnList.addAll(page);
+        }
+
+        return returnList;
+    }
+
+    private boolean groupHasImage(Ads_adgroup group) {
+        return group.getCreative() != null && StringUtils.isNotBlank(group.getCreative().getImage_file());
+    }
+
+    /**
+     * Create groups service call
+     *
+     * @param groups The groups to add
+     * @throws Exception
+     */
+    public Ads_create_adgroups_result createGroups(List<Ads_adgroup> groups) throws Exception {
+        Ads_create_adgroups_result result = null;
+
+        if (!groups.isEmpty()) {
+            if (groups.size() > 1) {
+                this.logger.debug("attempted to create " + groups.size() + " groups, but only creating the first one.");
+            }
+            Ads_adgroup group = groups.get(0);
+
+            String response;
+            if (groupHasImage(group)) {
+                response = groupWithImageCall(FacebookMethod.ADS_CREATE_GROUPS, group);
+            } else {
+                response = groupWithoutImageCall(FacebookMethod.ADS_CREATE_GROUPS, group);
+            }
+
+            // HACK
+            // if facebook sends us back a crazy XML error, replace it with a crazy JSON error
+            if (response.contains(UNKNOWN_ERROR_XML)) {
+                response = UNKNOWN_ERROR_GROUP_JSON;
+            }
+
+            result = this.jsonMapper.readValue(response, Ads_create_adgroups_result.class);
+        }
+
+        return result;
+    }
+
+    /**
+     * Update groups service call
+     *
+     * @param groups The groups to update
+     * @throws Exception
+     */
+    public Ads_update_adgroups_result updateGroups(List<Ads_adgroup> groups) throws Exception {
+        Ads_update_adgroups_result result = null;
+
+        if (!groups.isEmpty()) {
+            if (groups.size() > 1) {
+                this.logger.debug("attempted to update " + groups.size() + " groups, but only updating the first one.");
+            }
+            Ads_adgroup group = groups.get(0);
+
+            String response;
+            if (groupHasImage(group)) {
+                response = groupWithImageCall(FacebookMethod.ADS_UPDATE_GROUPS, group);
+            } else {
+                response = groupWithoutImageCall(FacebookMethod.ADS_UPDATE_GROUPS, group);
+            }
+
+            // HACK
+            // if facebook sends us back a crazy XML error, replace it with a crazy JSON error
+            if (response.contains(UNKNOWN_ERROR_XML)) {
+                response = UNKNOWN_ERROR_GROUP_JSON;
+            }
+
+            // remove ids from the group errors since jackson cant parse them
+            response = response.replaceAll(GROUP_UPDATE_ERROR_BAD_REGEX, GROUP_UPDATE_ERROR_OK_RESPONSE);
+            this.logger.debug("modified repsonse: " + response);
+
+            // if the responses has no failures it will return an empty array instead of an empty map for some reason
+            response = response.replaceAll(":\\[]}$", ":\\{}}");
+
+            // now we can hopefully parse into our result object
+            result = this.jsonMapper.readValue(response, Ads_update_adgroups_result.class);
+        }
+
+        return result;
+    }
+
+    /**
+     * creates a group without an image file (but the group still must have an image url to be valid)
+     * @param method the facebook method which will be a group create or group edit
+     * @param group the group to create or edit
+     * @throws Exception facebook exception
+     */
+    protected String groupWithoutImageCall(FacebookMethod method, Ads_adgroup group) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_GROUPS, new Ads_adgroup[] { group });
+
+        return call(method, params);
+    }
+
+    /**
+     * create a group with an image.
+     * uploads a mime encoded image using bare HTTP not REST
+     */
+    protected String groupWithImageCall(FacebookMethod method, Ads_adgroup group) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_GROUPS, new Ads_adgroup[] { group });
+
+        params.putAll(this.basicParams);
+        params.put(PARAM_METHOD, method.methodName());
+        params.put(PARAM_CALL_ID, System.currentTimeMillis());
+        params.put(PARAM_FORMAT, VALUE_JSON_FORMAT);
+        Map<String, String> jsonParams = getJsonParams(params);
+
+        // sign the call
+        String signature = FacebookSignatureUtil.generateSignature(jsonParams, getSecretKey(fca));
+        jsonParams.put(PARAM_SIGNATURE, signature);
+
+        this.logger.debug(jsonParams.get(PARAM_GROUPS));
+
+        // create the image map
+        Map<String, File> imageMap = new HashMap<String, File>();
+        imageMap.put("image", new File(this.imageUploadDirectory + File.separator + group.getCreative().getImage_file()));
+
+        // create the request
+        HttpClient client = new HttpClient();
+        PostMethod post = UrlUtils.buildHttpMultiPartRequest(FACEBOOK_API_URI, jsonParams, imageMap, HttpContentType.image);
+
+        this.logger.debug(post.getQueryString());
+
+        // retry until we get a non-empty result from fb
+        int count = 1;
+        final int MAX_RETRIES = 5;
+        final long SLEEP_TIME = 5000;
+        String response = null;
+        boolean isBlank = true;
+
+        while (isBlank && count <= MAX_RETRIES) {
+
+            // make the service call
+            client.executeMethod(post);
+            response = post.getResponseBodyAsString();
+
+            // hack to deal with facebook's random empty response
+            isBlank = StringUtils.isBlank(response);
+            if (isBlank) {
+                this.logger.debug("received empty response from facebook.  retry " + count + " of " + MAX_RETRIES);
+                try {
+                    Thread.sleep(SLEEP_TIME);
+                } catch (InterruptedException e) {
+                    this.logger.debug("sleep interupted", e);
+                }
+            }
+            count++;
+        }
+
+        this.logger.debug(response);
+
+        throwOnErrorResponse(response, VALUE_JSON_FORMAT);
+
+        return response;
+    }
+
+    //// Group Methods ////
+
+    //// Target Methods ////
+    /**
+     * Get target service call
+     * @param campaignId campaign to get target from.
+     * @param groupId  group to get target from.
+     * @return the target
+     * @throws Exception
+     */
+    public Ads_targeting getTarget(long campaignId, long groupId) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_INCLUDE_DELETED, VALUE_INCLUDE_DELETED);
+        params.put(PARAM_CAMPAIGN_IDS, new long[] { campaignId });
+        params.put(PARAM_GROUP_IDS, new long[] { groupId });
+
+        Map<Long, Ads_targeting> targetMap = call(FacebookMethod.ADS_GET_TARGETS, params, new TypeReference<Map<Long, Ads_targeting>>() {
+        });
+
+        return targetMap.get(groupId);
+    }
+
+    /**
+     * Get estimation stats for targets
+     * @param target Facebook Target json object
+     * @return the estimation stats json response (in a String)
+     * @throws Exception
+     */
+    public String estimateTargetStats(Ads_targeting target) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put("targeting_spec", target);
+
+        // Request USD here and convert the result later
+        params.put("currency", "USD");
+
+        return call(FacebookMethod.ADS_ESTIMATE_TARGET_STATS, params);
+        // json response looks like
+        // {"users":20,"bid_estimations":[{"location":3,"cpc_min":49,"cpc_median":56,"cpc_max":63,"cpm_min":21,"cpm_median":24,"cpm_max":27}]}
+    }
+
+    /**
+     * Get estimation stats for targets
+     * @param target Facebook Target json object
+     * @return the estimation stats
+     * @throws Exception
+     */
+    public Ads_targeting_stats getTargetStats(Ads_targeting target) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put("targeting_spec", target);
+        params.put("currency", this.fca.getCurrency().getCurrencyCode());
+
+        // for some reason, fb can't handle a target with the adgroup id set,
+        // so set it to 0 here, then set back after the call
+        // TODO 2011-10-18 does not look like this hack is necessary anymore
+        long groupId = target.getAdgroup_id();
+        target.setAdgroup_id(0);
+
+        Ads_targeting_stats stats;
+        try {
+            stats = call(FacebookMethod.ADS_ESTIMATE_TARGET_STATS, params, Ads_targeting_stats.class);
+        } catch (FacebookException fe) {
+            // just log a warning here and return an empty stats object (?)
+            logger.warn("failed to get target stats, using empty stats");
+            stats = new Ads_targeting_stats();
+        } finally {
+            // replace the id after the call
+            // TODO 2011-10-18 does not look like this hack is necessary anymore
+            target.setAdgroup_id(groupId);
+        }
+
+        return stats;
+    }
+    //// Target Methods ////
+
+    //// Creative Methods ////
+    /**
+     * Get target service call
+     * @param campaignId campaign to get creative from
+     * @param groupId group to get creative from.
+     * @return list of creatives
+     * @throws Exception
+     */
+    public Ads_creative getCreative(long campaignId, long groupId) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_INCLUDE_DELETED, VALUE_INCLUDE_DELETED);
+        params.put(PARAM_CAMPAIGN_IDS, new long[] { campaignId });
+        params.put(PARAM_GROUP_IDS, new long[] { groupId });
+
+        Map<Long, Ads_creative> creativeMap = call(FacebookMethod.ADS_GET_ADS, params, new TypeReference<Map<Long, Ads_creative>>() {
+        });
+
+        return creativeMap.get(groupId);
+    }
+
+    /**
+     * Update creatives service call.
+     * Call actual updates a group with everything null, except for the creative
+     * @param groupId group id the creative is in
+     * @param creative creative to update
+     * @return group result
+     * @throws Exception
+     */
+    public Ads_update_adgroups_result updateCreative(long groupId, Ads_creative creative) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+
+        Ads_adgroup group = new Ads_adgroup();
+        group.setAdgroup_id(groupId);
+        group.setCreative(creative);
+
+        params.put(PARAM_GROUPS, new Ads_adgroup[] { group });
+
+        String response;
+        if (groupHasImage(group)) {
+            response = groupWithImageCall(FacebookMethod.ADS_UPDATE_GROUPS, group);
+        } else {
+            response = groupWithoutImageCall(FacebookMethod.ADS_UPDATE_GROUPS, group);
+        }
+
+        // remove ids from the group errors since jackson cant parse them
+        response = response.replaceAll(GROUP_UPDATE_ERROR_BAD_REGEX, GROUP_UPDATE_ERROR_OK_RESPONSE);//.replaceAll("]}}", "]]}");
+
+        // if the responses has no failures it will return an empty array instead of an empty map for some reason
+        response = response.replaceAll(":\\[]}$", ":\\{}}");
+
+        this.logger.debug("modified repsonse: " + response);
+
+        // now we can hopefully parse into our result object
+        return this.jsonMapper.readValue(response, Ads_update_adgroups_result.class);
+    }
+
+    ////Creative Methods ////
+
+    //// Autocomplete Methods ////
+    /**
+     * Given a string, return a list of fb keywords which start with it.
+     */
+    public List<String> getKeywordsStartsWith(String prefix, int maxResults) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_LIKE_TYPE, VALUE_LIKE_TYPE);
+        params.put("query_string", prefix);
+        params.put("max_results", maxResults);
+
+        return call(FacebookMethod.ADS_GET_AUTO_COMPLETE_KEYWORDS, params, new TypeReference<List<String>>() {
+        });
+    }
+
+    /**
+     * return a crazy map of all global auto complete data.
+     * currently only used to generate propery files.
+     * @throws Exception
+     */
+    public Map<TargetingTypeEnum, List<Map<String, Object>>> getAutoCompleteData() throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put("include_small_cities", true);
+
+        return call(FacebookMethod.ADS_GET_AUTO_COMPLETE_DATA, params, new TypeReference<Map<TargetingTypeEnum, List<Map<String, Object>>>>() {
+        });
+    }
+
+    //// Autocomplete Methods ////
+
+    //// Keyword Methods ////
+    /**
+     * Given a keyword, return true if it is valid
+     */
+    public boolean isValidKeyword(String keyword) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put(PARAM_LIKE_TYPE, VALUE_LIKE_TYPE);
+        params.put("input_keywords", new String[] { keyword });
+
+        return !call(FacebookMethod.ADS_GET_VALID_KEYWORDS, params, new TypeReference<List<String>>() {
+        }).isEmpty();
+    }
+
+    public Validated_keywords_response getValidKeywords(List<String> keywords) throws Exception {
+        return null;
+    }
+
+//    /**
+//     * Given a list of possible keywords we determine which ones are valid, have suggestions, or
+//     * are invalid.
+//     *
+//     * @param keywords
+//     * @return list of Validated_keyword's with information about their validity
+//     * @throws Exception
+//     */
+//    @Override
+//    public List<Validated_keyword> getValidKeywords(List<String> keywords) throws Exception {
+//        Map<String, Object> params = new HashMap<String, Object>();
+//        params.put(PARAM_LIKE_TYPE, VALUE_LIKE_TYPE);
+//        params.put("input_keywords", keywords);
+//        // The advanced parameter tells us about suggestions for invalid keywords
+//        params.put("advanced", "1");
+//
+//        return call(FacebookMethod.ADS_GET_VALID_KEYWORDS, params, new TypeReference<List<Validated_keyword>>() {});
+//    }
+
+    /**
+     * Given a JSON-encoded list of keywords, returns a JSON list of related keywords
+     */
+    public String getKeywordSuggestions(String inputKeywords) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put("input_keywords", inputKeywords);
+        params.put("max_results", 10); // 10 is current maximum supported by facebook (2011-03-30)
+
+        return call(FacebookMethod.ADS_GET_KEYWORD_SUGGESTIONS, params);
+    }
+
+
+    /**
+     * Make request to facebook.ads.getAdGroupKeywordStats,
+     * account_id, campaign_ids and adgroup_ids are required, and do not assign limit and offset here.
+     *
+     * @param campaignId An array of campaign IDs used to filter results
+     * @param groupId An array of Ad Group IDs used to filter results.
+     *
+     * @return String The ad keyword stats in the past 7 days (excluding the current day).
+     */
+      public String getGroupKeywordStats(long campaignId, long groupId) throws Exception {
+          Map<String, Object> params = new HashMap<String, Object>();
+
+          params.put(PARAM_ACCOUNT_ID, this.fca.getAccountId());
+          params.put(PARAM_CAMPAIGN_IDS, new long[] { campaignId });
+          params.put(PARAM_GROUP_IDS, new long[] { groupId });
+
+          return call(FacebookMethod.ADS_GET_ADGROUP_KEYWORDS_STATS, params);
+      }
+
+    //// Keyword Methods ////
+
+    //// Broad Category Methods ////
+
+    /**
+     * Given an account id (already in each call) returns BCT IDs for use in the broad-category targeting (BCT) that you can specify for ads.
+     */
+    public List<Ads_broad_category> getBroadCategories() throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        return call(FacebookMethod.ADS_GET_BROAD_CATEGORIES, params, new TypeReference<List<Ads_broad_category>>(){});
+    }
+
+    //// Broad Category Methods ////
+
+    //// Reporting Methods ////
+
+    /**
+     * Get all reporting info for this account per given date range, as an xml String !?
+     *
+     * @param startDate
+     * @param endDate
+     * @return reporting info for this account per given date range, as an xml String
+     * @throws Exception
+     * @deprecated API broken again. Use getAccountStatsWithPaging instead, to guarantee full data
+     */
+    public String getAccountStats(Date startDate, Date endDate) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put("time_ranges", buildTimeRange(startDate, endDate));
+
+        // fb broke the api again.
+        // now need to use this param to get stats only for groups which have impressions
+        // otherwise it will return a report with every group in the account, with most data as all 0s.
+        params.put("stats_mode", "with_delivery");
+
+        return call(FacebookMethod.ADS_GET_GROUP_STATS, params, VALUE_XML_FORMAT);
+    }
+
+
+    /**
+     * With paging FB doesnt tell you how many responses were returned,
+     * but it does tell you what the total number of responses will be after all
+     * pages have been request.
+     * Parse that number out here from the report.
+     * @param stats the xml group stats response
+     * @return the total number of groups returned, or -1 if unknown
+     */
+    private int getTotalCountFromStats(String stats) {
+        int count = -1;
+
+        Matcher matcher = GROUP_STATS_TOTAL_COUNT_PATTERN.matcher(stats);
+        if (matcher.find()) {
+            String totalCount = stats.substring(matcher.start(), matcher.end());
+            if (StringUtils.isNotBlank(totalCount)) {
+                try {
+                    count = Integer.parseInt(totalCount);
+                } catch (NumberFormatException nfe) {
+                    logger.warn("could not parse total counts from: " + totalCount);
+                }
+
+            }
+        }
+
+        return count;
+    }
+
+
+    /**
+     * Get all reporting info for this account per given date range, and save them to disk.
+     * @param startDate start date of the report, should be midnight of the first day.
+     * @param endDate end date of the report, should be the last second of the last day (?)
+     * @param baseFileName the base file name, with which all of these raw reports will be saved
+     * @return a list of file names where the raw reports are saved
+     * @throws Exception
+     */
+    public List<File> getAccountStatsWithPaging(Date startDate, Date endDate, String baseFileName) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        List<Map<String, Long>> timeRanges = buildTimeRange(startDate, endDate);
+        final int numDays = timeRanges.size();
+
+        params.put("time_ranges", timeRanges);
+
+        // fb broke the api again.
+        // now need to use this param to get stats only for groups which have impressions
+        // otherwise it will return a report with every group in the account, with most data as all 0s.
+        params.put("stats_mode", "with_delivery");
+        params.put("limit", MAX_BATCH_SIZE);
+        params.put("include_count", "1");
+
+        int lastBatchSize = MAX_BATCH_SIZE;
+        int totalSize = 0;
+        List<File> files = new ArrayList<File>();
+
+        // keep on getting batches until we get an incomplete one
+        boolean retrievedAllStats = false;
+        while (!retrievedAllStats) {
+
+            // update the offset based on how many groups we already received
+            params.put("offset", totalSize);
+
+            // get this batch of groups
+            String stats = call(FacebookMethod.ADS_GET_GROUP_STATS, params, VALUE_XML_FORMAT);
+
+            // count the number of groups returned since fb doesnt tell us
+            lastBatchSize = com.marin.util.StringUtils.countMatches(stats, GROUP_STATS_COUNT_PATTERN) / numDays;
+            totalSize += lastBatchSize;
+
+            // check that if last batch size was not a full batch, that we have retrieved all expected elements
+            if (lastBatchSize < MAX_BATCH_SIZE) {
+                retrievedAllStats = true; // is it though?
+                int expectedTotalGroups = getTotalCountFromStats(stats);
+                if (expectedTotalGroups != totalSize) {
+                    // TODO: what should we do if this case is detected?
+                    logger.warn("last batch size:" + lastBatchSize + ", total groups: " + totalSize + ", expected total groups: " + expectedTotalGroups);
+                } else {
+                    logger.debug("expected and received stats for " + totalSize + " total groups");
+                }
+            }
+
+            // write the results to a file, which is named based on the number of the batch
+            File file = new File(FileUtils.createAlternateFileName(baseFileName, String.valueOf(files.size())));
+            Writer w = new FileWriter(file);
+            try {
+                w.write(stats);
+            } finally {
+                w.close();
+            }
+
+            // add the file to the return list
+            files.add(file);
+        }
+
+        return files;
+
+    }
+
+    /**
+     * creates a daily ad performance report
+     * @param numDays the number of days this report should cover,
+     * starting from the day before the report is run and going into the past
+     * @deprecated facebook does not return necessary data in the scheduled report.  use getAccountStats instead.
+     */
+
+    private Ads_report getDailyAdPerformanceReport(int numDays) {
+        Ads_report report = new Ads_report();
+        report.setAgg_time("daily");
+        report.setReport_type("perf");
+        report.setSummarize_by("ad");
+
+        // In the comments are sample values where REPORT_RUN_TIME = 3 and numDays = 3
+
+        // report should cover the previous [numDays] days, not including today
+        long hoursFromStart = REPORT_RUN_TIME + (numDays * 24); // e.g. 3+(3*24)= 75 hours
+        long hoursFromStop = REPORT_RUN_TIME; // 3
+
+        // FB HACKINESS:
+        // FB does something dumb and doesnt calculate the report times based on the scheduled run time
+        // but on the actual run time instead.  so we dont really know what these start and stop times are.
+        // FB also will pull an entire day's worth of data if you only include 1 second.
+        // So, we want to put the start and end times in the middle of each day to maximize our chances of
+        // getting the proper report length
+
+        // add 12 hours to the start time to land in the middle of the start day
+        hoursFromStart -= 12; // e.g. 75-12 = 63 hours
+
+        // subtract 12 hours to the end time to land in the middle of the end day
+        hoursFromStop += 12; // e.g. 3+12 = 15 hours
+
+        // ensure stop time is after start
+        if (hoursFromStop >= hoursFromStart) { // e.g. 15 >= 63
+            hoursFromStop = hoursFromStart - 1; // skip
+        }
+
+        // convert to seconds and set
+        report.setTime_start_offset((int) (hoursFromStart * DateConverter.ONE_HOUR_IN_SECS)); // 63 * 3600 = 226800
+        report.setTime_stop_offset((int) (hoursFromStop * DateConverter.ONE_HOUR_IN_SECS)); // 15 * 3600 = 54000
+
+        return report;
+    }
+
+    /**
+     * creates a reports and a report scheled
+     * @param numDays
+     * @deprecated facebook does not return necessary data in the scheduled report.  use getAccountStats instead.
+     */
+    private Ads_schedule getDailyAdPerformanceReportSchedule(int numDays, Date firstRunTime) {
+        Ads_schedule schedule = new Ads_schedule();
+
+        // set the daily ad performance report type
+        Ads_report report = getDailyAdPerformanceReport(numDays);
+        schedule.setReport_spec(report);
+
+        long time = firstRunTime.getTime() / DateConverter.ONE_SECOND_IN_MILLIS;
+        schedule.setTime_next_ref(time);
+
+        // TODO: this name is customer visible on the facebook ui, what should it be?
+        schedule.setName(this.fca.getAccountId() + "-MARIN-" + time);
+        schedule.setStatus(1); // active
+        schedule.setFrequency(1); // daily
+        schedule.setEmail(0); // do not email
+        return schedule;
+    }
+
+    /**
+     * create a scheduled daily ad performance report.
+     * @throws Exception
+     * @deprecated facebook does not return necessary data in the scheduled report.  use getAccountStats instead.
+     */
+    public Ads_create_adreport_schedules_result createScheduledDailyAdReport(int numDays) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+
+        // first run time is tomorrow at the fca's report hour
+        Calendar cal = DateConverter.getCalendar(Calendar.HOUR_OF_DAY, this.fca.getTimeZone());
+        cal.add(Calendar.DAY_OF_MONTH, 1);
+        cal.set(Calendar.HOUR_OF_DAY, this.fca.getHourOfDailyReport());
+
+        Ads_schedule schedule = getDailyAdPerformanceReportSchedule(numDays, cal.getTime());
+        params.put("schedule_specs", new Ads_schedule[] { schedule });
+
+        return call(FacebookMethod.ADS_CREATE_REPORT_SCHEDULES, params, Ads_create_adreport_schedules_result.class);
+    }
+
+    /**
+     * retrieve the scheduled report info for the given schedule Id.
+     * this method is currently only used for unit testing,
+     * verifying the the created scheduled report is what we expect
+     *
+     * @param scheduleId schedule to retrieve
+     * @throws Exception
+     * @deprecated facebook does not return necessary data in the scheduled report.  use getAccountStats instead.
+     */
+    public Ads_schedule getSchedule(long scheduleId) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put("schedule_ids", new long[] { scheduleId });
+
+        return call(FacebookMethod.ADS_GET_REPORT_SCHEDULES, params, new TypeReference<List<Ads_schedule>>() {
+        }).get(0);
+    }
+
+    /**
+     * Given a schedule id, get a report in XML format
+     * @param scheduledReportId the report id to get
+     * @throws Exception
+     * @deprecated facebook does not return necessary data in the scheduled report.  use getAccountStats instead.
+     */
+    public String getReport(long scheduledReportId) throws Exception {
+        Map<String, Object> params = new HashMap<String, Object>();
+        params.put("schedule_ids", new long[] { scheduledReportId });
+
+        final String GET_REPORT_DATA = "with_report_data";
+
+        // this is very annoying.
+        // first we must query for all job ids without data.
+        // then we request the data using the latest job id.
+        // no i'm not kidding, this is how fb designed it.
+        params.put(GET_REPORT_DATA, false);
+        ArrayList<Map<?, ?>> jobResponse = call(FacebookMethod.ADS_GET_REPORT, params, new TypeReference<ArrayList<Map<?, ?>>>() {
+        });
+
+        // get the most recent job id from the response
+        long jobId = getLastJobId(jobResponse);
+
+        // now get the real data with the most recent job id
+        params.put("job_ids", new Long[] { jobId });
+        params.put(GET_REPORT_DATA, true);
+
+        logger.debug("requesting facebook scheduled report: " + scheduledReportId + " -- job id: " + jobId);
+        return call(FacebookMethod.ADS_GET_REPORT, params, VALUE_XML_FORMAT);
+    }
+
+    /**
+     * given facebook's array of job maps, return the job id which is the most recent
+     * @param jobMaps the array of jobmaps to search through
+     * @return the most recent job id or 0 if none found'
+     * @deprecated facebook does not return necessary data in the scheduled report.  use getAccountStats instead.
+     */
+    private long getLastJobId(ArrayList<Map<?, ?>> jobMaps) {
+        long lastJobId = 0;
+        long lastTimeReference = 0;
+
+        final String TIME_REF_PARAM = "time_reference";
+        final String JOB_ID_PARAM = "job_id";
+
+        for (Map<?, ?> jobMap : jobMaps) {
+
+            // get the time ref
+            String timeReferenceString = String.valueOf(jobMap.get(TIME_REF_PARAM));
+            try {
+                long timeReference = Long.parseLong(timeReferenceString);
+                if (lastTimeReference < timeReference) {
+                    // time ref is most recent so save it as well as the job id
+                    lastJobId = Long.parseLong(String.valueOf(jobMap.get(JOB_ID_PARAM)));
+                    lastTimeReference = timeReference;
+                }
+            } catch (NumberFormatException nfe) {
+                logger.error("could not parse job map -- time ref: " + jobMap.get(TIME_REF_PARAM) + " -- job id: " + jobMap.get(JOB_ID_PARAM));
+            }
+        }
+
+        return lastJobId;
+    }
+
+    //// Reporting Methods ////
+
+    /**
+     * return true if this json response is an error response
+     *
+     * @param response facebook REST response
+     * @return true if this response is an error response, otherwise false
+     */
+    private boolean isErrorResponse(String response) {
+        return response.contains("error_code") &&
+                response.contains("error_msg") &&
+                response.contains("request_args");
+    }
+
+    /**
+     * given a response and a valid format, parse the response and thrown an exception
+     * @param response rest response
+     * @param format format of the response, xml or json
+     * @throws Exception the parsed exception
+     */
+    private void throwOnErrorResponse(String response, String format) throws Exception {
+
+        // check if error response
+        if (isErrorResponse(response)) {
+
+            // if so, parse and throw
+            if (VALUE_JSON_FORMAT.equalsIgnoreCase(format)) {
+                throwExceptionFromJson(response);
+            } else if (VALUE_XML_FORMAT.equalsIgnoreCase(format)) {
+                throwExceptionFromXml(response);
+            }
+        }
+    }
+
+    /**
+     * given a json response throw a FacebookException
+     * @param jsonResponse the json error repsonse
+     * @throws FacebookException the exception which contains the error information
+     */
+    private void throwExceptionFromJson(String jsonResponse) throws Exception {
+        // use jackson to parse
+        FacebookApiException apiException = this.jsonMapper.readValue(jsonResponse, FacebookApiException.class);
+
+        // throw the exception
+        throw new FacebookException(apiException);
+    }
+
+    /**
+     * given a xml response throw a FacebookException
+     * @param xmlResponse the xml error repsonse
+     * @throws FacebookException the exception which contains the error information
+     */
+    private void throwExceptionFromXml(String xmlResponse) throws Exception {
+
+        // parse the error code and the error message
+        String errorCode = getTextFromXml(xmlResponse, "error_code");
+        String errorMsg = getTextFromXml(xmlResponse, "error_msg");
+
+        // throw the exception
+        throw new FacebookException(Integer.parseInt(errorCode), errorMsg);
+    }
+
+    /**
+     * given an xml string and an xml tag, parse out the text content from the element
+     * @param xml xml
+     * @param tag the tag to parse the error from
+     * @return the text
+     */
+    private String getTextFromXml(String xml, String tag) {
+        String text = null;
+
+        if (StringUtils.isNotBlank(xml) && StringUtils.isNotBlank(tag)) {
+
+            // find the start and end tags
+            int start = xml.lastIndexOf("<" + tag + ">");
+            int end = xml.lastIndexOf("</" + tag + ">");
+
+            // get the text between the start and end tags
+            if (start > -1 && end > start) {
+                text = xml.substring(start + tag.length() + 2, end);
+            }
+        }
+        return text;
+    }
+
+    /**
+     * convert Map<String,Object> to a json Map<String,String> where values are json encoded
+     * @param params
+     * @throws Exception
+     */
+    protected Map<String, String> getJsonParams(Map<String, Object> params) throws Exception {
+
+        Map<String, String> jsonParams = new HashMap<String, String>(params.size());
+        for (Entry<String, Object> entry : params.entrySet()) {
+            Object o = entry.getValue();
+            String value;
+
+            if (o instanceof String) {
+                value = (String) o;
+            } else {
+                value = this.jsonMapper.writeValueAsString(o);
+            }
+            jsonParams.put(entry.getKey(), value);
+        }
+        return jsonParams;
+    }
+}

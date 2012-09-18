@@ -1,0 +1,100 @@
+https://graph.facebook.com/6003996573807?date_format=U&
+access_token=AAAAAMSp0eVoBAOtxZBgwvMnq2BibSZC5LYMvsbhV1WCxlPf01mUOvWWLgA0Ud7GSSOKeWkJCbswPXdbJEZC8SLQuZBXLgrjucOiYj4AP8AZDZD
+
+
+{
+   "adgroup_id": 6003996573807,
+   "ad_id": 6003996573807,
+   "campaign_id": 6003996568607,
+   "name": "group 7",
+   "adgroup_status": 5,
+   "bid_type": 1,
+   "max_bid": "2",
+   "bid_info": {
+      "1": "2"
+   },
+   "disapprove_reason_descriptions": [
+      "The content of your ad or Sponsored Story
+      does not adequately reflect the product or
+      service advertised. Before resubmitting it,
+      please visit our Help Center (https://www.facebook.com/help/?page=245316378826196) for additional information and examples compliant with our Advertising Guidelines."
+   ],
+   "ad_status": 5,
+   "account_id": 72047375,
+   "id": "6003996573807",
+   "creative_ids": [
+      6004029287607
+   ],
+   "targeting": {
+      "genders": [
+         2
+      ],
+      "age_max": 65,
+      "age_min": 13,
+      "zips": [
+         "11800",
+         "46202",
+         "60060",
+         "94015"
+      ],
+      "countries": [
+         "US"
+      ],
+      "keywords": [
+         "#English language",
+         "#French language",
+         "#Spanish language"
+      ],
+      "relationship_statuses": [
+         1,
+         2,
+         4
+      ],
+      "interested_in": [
+         2
+      ],
+      "work_networks": [
+         {
+            "id": "50431659",
+            "name": "Teach For America"
+         },
+         {
+            "id": "50431975",
+            "name": "Farmers Insurance"
+         },
+         {
+            "id": "50438160",
+            "name": "TVWorks"
+         },
+         {
+            "id": "50465592",
+            "name": "CISV International"
+         }
+      ],
+      "locales": [
+         "43",
+         "44",
+         "46",
+         "9"
+      ]
+   },
+   "conversion_specs": [
+      {
+         "action.type": "page_engagement",
+         "page": 109184585781606
+      }
+   ],
+   "start_time": null,
+   "end_time": null,
+   "updated_time": 1338394366
+}
+
+==================================================
+
+{
+   "error": {
+      "message": "Invalid OAuth access token.",
+      "type": "OAuthException",
+      "code": 190
+   }
+}
